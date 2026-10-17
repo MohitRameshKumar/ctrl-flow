@@ -14,6 +14,13 @@ export default defineConfig({
         suggested_key: { default: 'Ctrl+Shift+Space', mac: 'Command+Shift+Space' },
         description: 'Cadence: open the leader-key menu',
       },
+      // Ctrl+Shift+K/Y are free in Chrome (it reserves Shift+T/N/W/Q/I/J/A/B/M/O/Delete), and
+      // Ctrl+K belongs to the omnibox. Chrome silently leaves the command unbound if another
+      // extension already holds this, so the Macros tab shows the live binding.
+      'open-macro-palette': {
+        suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
+        description: 'Cadence: open the macro palette',
+      },
     },
     permissions: [
       'tabs',
@@ -24,6 +31,10 @@ export default defineConfig({
       'notifications',
       'tabGroups',
       'identity',
+      // Click replay injects a self-contained click function into the page.
+      'scripting',
+      // chrome.sidePanel.open() needs this declared; WXT may add it too, duplicates are fine.
+      'sidePanel',
     ],
     host_permissions: ['<all_urls>'],
     incognito: 'not_allowed',

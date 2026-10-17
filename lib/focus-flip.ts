@@ -23,6 +23,7 @@ import {
   type TrackerState,
 } from './flip-learning';
 import { normalizeUrl } from './normalize';
+import { isReplayInProgress } from './macro-run-channel';
 import { markProgrammaticNav } from './programmatic';
 import { getBlocklist, isBlocklisted, isPaused } from './privacy';
 
@@ -150,6 +151,8 @@ export async function handleUserActivation(tabId: number, rawUrl: string | undef
 /** Content-script pulses: keystroke / scroll / click happened (no details). */
 export async function handleActivity(tabId: number, what: 'key' | 'scroll' | 'click'): Promise<void> {
   if (!(await isFocusFlipEnabled()) || (await isPaused())) return;
+  // Pulses produced while a macro replays are Cadence's own clicks/typing, not the user's.
+  if (await isReplayInProgress()) return;
   const tab = await chrome.tabs.get(tabId).catch(() => undefined);
   const url = await tabIsTrackable(tab?.url);
   if (!tab || !url) return;
@@ -206,6 +209,8 @@ async function scheduleCheck(tabId: number, url: string, keyTs: number): Promise
 /** Starts a flip if — and only if — every safety condition holds. Returns whether it flipped. */
 export async function checkFlip(writingTabId: number, keyTs: number): Promise<boolean> {
   if (!(await isFocusFlipEnabled()) || (await isPaused())) return false;
+  // A macro replay drives tabs on its own: never steal focus into a reference tab mid-run.
+  if (await isReplayInProgress()) return false;
   if (await getFlipState()) return false;
 
   const tracker = await readTracker();
@@ -242,6 +247,7 @@ export async function checkFlip(writingTabId: number, keyTs: number): Promise<bo
 }
 
 async function startFlip(writingTabId: number, referenceTabId: number, dwellMs: number): Promise<void> {
+  if (await isReplayInProgress()) return; // last line of defence: the flip itself, not just its triggers
   const now = Date.now();
   const state: FlipState = {
     id: `${now}-${Math.random().toString(36).slice(2, 8)}`,

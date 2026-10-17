@@ -47,7 +47,7 @@ export function LeaderKeysSection() {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
       const item = menu.find((i) => i.letter === e.key.toLowerCase());
-      if (item && !item.comingSoon && item.id !== 'search') run(item.letter);
+      if (item && item.id !== 'search') run(item.letter);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -73,8 +73,8 @@ export function LeaderKeysSection() {
 
       <ul className="leader-list">
         {menu.map((i) => (
-          <li key={`${i.kind}-${i.id}`} className={i.comingSoon ? 'soon' : undefined}>
-            <button className="btn letter-btn" disabled={i.comingSoon || i.id === 'search'} onClick={() => run(i.letter)}>
+          <li key={`${i.kind}-${i.id}`}>
+            <button className="btn letter-btn" disabled={i.id === 'search'} onClick={() => run(i.letter)}>
               {i.letter.toUpperCase()}
             </button>
             <span>{i.label}</span>

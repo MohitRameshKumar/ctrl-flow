@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import { suggestLetter } from '@/lib/hotkeys';
-import { SPACE_LETTERS_KEY, setSpaceLetter, takenLetters } from '@/lib/leader';
+import { MACRO_LETTERS_KEY, SPACE_LETTERS_KEY, setMacroLetter, setSpaceLetter, takenLetters } from '@/lib/leader';
 
-/** HOT-4: assign a free leader-key letter to a saved space (Leader + letter = project switch). */
-export function SpaceLetterControl({ spaceId, name }: { spaceId: number; name: string }) {
+/**
+ * HOT-4: assign a free leader-key letter to a saved space (Leader + letter = project switch) or,
+ * with `kind="macro"`, to a saved macro (Leader + letter = run it). `spaceId` is the row's id either way.
+ */
+export function SpaceLetterControl({ spaceId, name, kind = 'space' }: { spaceId: number; name: string; kind?: 'space' | 'macro' }) {
+  const storageKey = kind === 'macro' ? MACRO_LETTERS_KEY : SPACE_LETTERS_KEY;
+  const ownerId = `${kind}:${spaceId}`;
+  const assignLetter = kind === 'macro' ? setMacroLetter : setSpaceLetter;
   const [letter, setLetter] = useState('');
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
-    const { [SPACE_LETTERS_KEY]: raw } = await chrome.storage.local.get<Record<string, Record<string, string> | undefined>>(SPACE_LETTERS_KEY);
+    const { [storageKey]: raw } = await chrome.storage.local.get<Record<string, Record<string, string> | undefined>>(storageKey);
     const mine = raw?.[String(spaceId)] ?? '';
     setLetter(mine);
-    setSuggestion(suggestLetter(name, await takenLetters(`space:${spaceId}`)));
-  }, [spaceId, name]);
+    setSuggestion(suggestLetter(name, await takenLetters(ownerId)));
+  }, [spaceId, name, storageKey, ownerId]);
 
   useEffect(() => {
     refresh();
@@ -24,7 +30,7 @@ export function SpaceLetterControl({ spaceId, name }: { spaceId: number; name: s
   }, [refresh]);
 
   const assign = async (value: string) => {
-    const result = await setSpaceLetter(spaceId, value);
+    const result = await assignLetter(spaceId, value);
     setError(result.ok ? '' : result.reason);
     if (result.ok) setDraft('');
     await refresh();

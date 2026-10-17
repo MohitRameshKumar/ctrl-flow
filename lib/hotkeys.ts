@@ -2,8 +2,8 @@
 // feature can plug in with `registerLeader({ id, letter, label, run })`.
 //
 //   R, K, M are RESERVED for Repeat-to-Macro (a teammate's feature). Nothing else may take them;
-//   the macro feature registers its letters with `allowReserved: true`. Until it does, the overlay
-//   shows them as "coming soon".
+//   the macro feature registers its letters with `allowReserved: true`. Saved macros can take any
+//   other free letter, the same way saved spaces do.
 
 export interface LeaderContext {
   tabId?: number;
@@ -30,10 +30,9 @@ export const RESERVED_LETTERS: Record<string, string> = {
 export interface MenuItem {
   letter: string;
   label: string;
-  kind: 'action' | 'space' | 'reserved';
-  /** Registration id, or the space id for kind "space". */
+  kind: 'action' | 'space' | 'macro';
+  /** Registration id, or the space / macro id for kind "space" / "macro". */
   id: string;
-  comingSoon?: boolean;
 }
 
 export type LetterCheck = { ok: true; letter: string } | { ok: false; reason: string };
@@ -122,11 +121,18 @@ export interface SpaceLetter {
   letter: string;
 }
 
-/** The overlay's letter list: registered actions, saved-space letters, then unclaimed reserved letters as "coming soon". */
+export interface MacroLetter {
+  macroId: number;
+  name: string;
+  letter: string;
+}
+
+/** The overlay's letter list: registered actions, saved-space letters, then saved-macro letters. */
 export function buildMenu(
   registrations: LeaderRegistration[],
   overrides: Record<string, string>,
   spaces: SpaceLetter[],
+  macros: MacroLetter[] = [],
 ): MenuItem[] {
   const actions: MenuItem[] = registrations.map((r) => ({
     letter: effectiveLetter(r, overrides),
@@ -140,14 +146,17 @@ export function buildMenu(
     kind: 'space',
     id: String(s.spaceId),
   }));
-  const taken = new Set([...actions, ...spaceItems].map((i) => i.letter));
-  const reserved: MenuItem[] = Object.entries(RESERVED_LETTERS)
-    .filter(([letter]) => !taken.has(letter))
-    .map(([letter, owner]) => ({ letter, label: `${owner} (coming soon)`, kind: 'reserved', id: letter, comingSoon: true }));
-  return [...actions.sort((a, b) => a.letter.localeCompare(b.letter)), ...spaceItems.sort((a, b) => a.letter.localeCompare(b.letter)), ...reserved];
+  const macroItems: MenuItem[] = macros.map((m) => ({
+    letter: m.letter,
+    label: `Macro: ${m.name}`,
+    kind: 'macro',
+    id: String(m.macroId),
+  }));
+  const byLetter = (a: MenuItem, b: MenuItem) => a.letter.localeCompare(b.letter);
+  return [...actions.sort(byLetter), ...spaceItems.sort(byLetter), ...macroItems.sort(byLetter)];
 }
 
-/** Resolves a pressed letter to a menu item (reserved "coming soon" letters resolve but do nothing). */
+/** Resolves a pressed letter to a menu item. */
 export function findMenuItem(menu: MenuItem[], pressed: string): MenuItem | undefined {
   const letter = normalizeLetter(pressed);
   return menu.find((i) => i.letter === letter);

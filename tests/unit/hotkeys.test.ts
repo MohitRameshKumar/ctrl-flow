@@ -68,28 +68,38 @@ test('suggestion falls back through the name, then any free letter', () => {
   assert.equal(suggestLetter('anything', all), null);
 });
 
-test('menu: actions, space letters and "coming soon" reserved letters; user overrides apply', () => {
+test('menu: actions, then space letters, then macro letters; user overrides apply; no placeholders', () => {
   const regs = [
     { id: 'open_panel', letter: 'e', label: 'Open side panel', run: noop },
     { id: 'pause', letter: 'p', label: 'Pause', run: noop },
   ];
-  const menu = buildMenu(regs, { pause: 'q' }, [{ spaceId: 7, name: 'Club website', letter: 'c' }]);
+  const menu = buildMenu(
+    regs,
+    { pause: 'q' },
+    [{ spaceId: 7, name: 'Club website', letter: 'c' }],
+    [{ macroId: 3, name: 'Morning', letter: 'o' }],
+  );
   assert.deepEqual(menu.map((i) => [i.letter, i.kind]), [
     ['e', 'action'],
     ['q', 'action'],
     ['c', 'space'],
-    ['r', 'reserved'],
-    ['k', 'reserved'],
-    ['m', 'reserved'],
+    ['o', 'macro'],
   ]);
-  assert.ok(menu.filter((i) => i.kind === 'reserved').every((i) => i.comingSoon));
   assert.equal(findMenuItem(menu, 'Q')?.id, 'pause');
+  assert.equal(findMenuItem(menu, 'o')?.id, '3');
   assert.equal(findMenuItem(menu, 'p'), undefined);
 });
 
-test('once the macro feature registers R, it replaces the "coming soon" entry', () => {
-  const regs = [{ id: 'macro', letter: 'r', label: 'Record macro', run: noop, allowReserved: true }];
+test('R, K and M appear as real actions once the macro feature registers them (nothing is "coming soon")', () => {
+  const regs = ['r', 'k', 'm'].map((letter) => ({ id: `macro-${letter}`, letter, label: `Macro ${letter}`, run: noop, allowReserved: true }));
   const menu = buildMenu(regs, {}, []);
-  assert.equal(findMenuItem(menu, 'r')?.kind, 'action');
-  assert.equal(findMenuItem(menu, 'k')?.comingSoon, true);
+  assert.deepEqual(menu.map((i) => [i.letter, i.kind]), [['k', 'action'], ['m', 'action'], ['r', 'action']]);
+  assert.equal(JSON.stringify(menu).includes('coming soon'), false);
+});
+
+test('a saved macro can take a free letter but not a reserved or taken one', () => {
+  const taken = [{ id: 'pause', letter: 'p' }];
+  assert.equal(validateLetter('o', 'macro:3', taken, { allowSlash: false }).ok, true);
+  assert.equal(validateLetter('r', 'macro:3', taken, { allowSlash: false }).ok, false);
+  assert.equal(validateLetter('p', 'macro:3', taken, { allowSlash: false }).ok, false);
 });

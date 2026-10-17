@@ -76,7 +76,7 @@ export default defineContentScript({
         items
           .map(
             (i) =>
-              `<div class="row${i.comingSoon ? ' soon' : ''}"><kbd>${escapeText(i.letter.toUpperCase())}</kbd><span>${escapeText(i.label)}</span></div>`,
+              `<div class="row"><kbd>${escapeText(i.letter.toUpperCase())}</kbd><span>${escapeText(i.label)}</span></div>`,
           )
           .join('') +
         `<div class="hint">Esc to close</div>`;
@@ -108,6 +108,8 @@ export default defineContentScript({
     }
 
     function onKey(e: KeyboardEvent): void {
+      // Letters here can run macros: a page script must not be able to press them for the user.
+      if (!e.isTrusted) return;
       if (e.key === 'Escape') {
         swallow(e);
         close();
@@ -134,7 +136,7 @@ export default defineContentScript({
       swallow(e);
       if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
       const item = items.find((i) => i.letter === e.key.toLowerCase());
-      if (!item || item.comingSoon) return;
+      if (!item) return;
       if (item.id === 'search') {
         searchMode = true;
         if (timer) clearTimeout(timer); // searching: no auto-close
@@ -156,7 +158,7 @@ export default defineContentScript({
 
       host = document.createElement('div');
       host.id = HOST_ID;
-      const root = host.attachShadow({ mode: 'open' });
+      const root = host.attachShadow({ mode: 'closed' });
       const style = document.createElement('style');
       style.textContent = STYLE;
       box = document.createElement('div');

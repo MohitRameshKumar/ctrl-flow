@@ -18,15 +18,27 @@ export interface Activation {
   ts: number;
 }
 
+/**
+ * Moments Chrome lost focus entirely, which end whatever segment was running.
+ *
+ * Without these, alt-tabbing to Slack for an hour kept crediting that whole hour to the last tab
+ * you happened to be looking at — the events were already being recorded, nothing read them.
+ */
+export interface FocusBreak {
+  ts: number;
+}
+
 /** ms spent on each space within the trailing window, from consecutive activation gaps. Pure — no chrome.* calls. */
 export function computeDwellBySpace(
   activations: Activation[],
   urlToSpace: Map<string, number>,
   now: number,
   windowMs: number,
+  focusBreaks: FocusBreak[] = [],
 ): Map<number, number> {
   const dwell = new Map<number, number>();
   const windowStart = now - windowMs;
+  const breaks = focusBreaks.map((b) => b.ts).sort((a, b) => a - b);
 
   for (let i = 0; i < activations.length; i++) {
     const cur = activations[i];
@@ -35,7 +47,10 @@ export function computeDwellBySpace(
     if (spaceId === undefined) continue;
 
     const next = activations[i + 1];
-    const segEnd = Math.min(next ? next.ts : now, now);
+    // A segment ends at whichever comes first: the next activation, Chrome losing focus, or now.
+    const nextBreak = breaks.find((ts) => ts > cur.ts);
+    const boundaries = [next ? next.ts : now, nextBreak ?? now, now];
+    const segEnd = Math.min(...boundaries);
     const segStart = Math.max(cur.ts, windowStart);
     if (segEnd <= segStart) continue;
 
@@ -124,7 +139,14 @@ export async function checkForSwitch(demoMode: boolean): Promise<SwitchCandidate
     .map((e) => ({ url: e.url, ts: e.ts }))
     .sort((a, b) => a.ts - b.ts);
 
-  const dwellBySpace = computeDwellBySpace(activations, urlToSpace, now, SWITCH_WINDOW_MS);
+  const focusLost = await getEventsByKind('chrome_focus_lost', now - SWITCH_WINDOW_MS, now);
+  const dwellBySpace = computeDwellBySpace(
+    activations,
+    urlToSpace,
+    now,
+    SWITCH_WINDOW_MS,
+    focusLost.map((e) => ({ ts: e.ts })),
+  );
 
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const currentNormalized = activeTab?.url ? normalizeUrl(activeTab.url) : null;

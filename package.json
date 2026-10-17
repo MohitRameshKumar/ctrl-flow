@@ -17,7 +17,10 @@
     "test:no-test-hooks": "npm run build && node e2e/check-no-test-hooks.mjs",
     "test:e2e": "npm run test:no-test-hooks && npm run build:test && playwright test",
     "test:e2e:live": "playwright test --config=playwright.live.config.ts",
-    "test:unit": "node --test \"tests/unit/*.test.ts\""
+    "test:e2e:macros": "playwright test --config=playwright.macros.config.ts",
+    "test:unit": "node --test \"tests/unit/*.test.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "dexie": "^4.4.6",
@@ -30,7 +33,9 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@wxt-dev/module-react": "^1.1.5",
+    "happy-dom": "^21.0.3",
     "typescript": "^5.9.3",
+    "vitest": "^5.0.5",
     "web-ext": "^10.5.0",
     "wxt": "^0.21.3"
   }

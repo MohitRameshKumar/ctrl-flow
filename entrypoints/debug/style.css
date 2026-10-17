@@ -109,3 +109,61 @@ th {
 tbody tr:hover {
   background: #171a21;
 }
+
+/* ---- Test harness (dev-only; delete with lib/dev-harness.ts) ---- */
+
+.harness {
+  background: #141821;
+  border: 1px solid #2c313c;
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+}
+
+.harness h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.harness .subtitle {
+  margin-bottom: 14px;
+}
+
+.harness .toolbar {
+  margin-bottom: 10px;
+}
+
+.harness select {
+  background: #1d2129;
+  color: #e6e8ee;
+  border: 1px solid #2c313c;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  max-width: 280px;
+}
+
+.harness-note {
+  background: #15241a;
+  border: 1px solid #2f5a3a;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.harness-note.bad {
+  background: #241617;
+  border-color: #5a2a2a;
+  color: #ff8a8a;
+}
+
+.harness-json {
+  background: #0b0d12;
+  border: 1px solid #262b35;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  overflow-x: auto;
+  margin-top: 10px;
+}

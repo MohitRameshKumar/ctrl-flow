@@ -32,11 +32,42 @@ function send(message: ContentMessage): void {
   });
 }
 
-function trimLabel(text: string): string {
-  return text.trim().replace(/\s+/g, ' ').slice(0, 80);
+/**
+ * Cap on any text taken from the page.
+ *
+ * Shorter than it used to be on purpose. `textContent` is the whole *subtree*, so clicking a
+ * container — a chat row, an email list item — used to capture up to 80 characters of page
+ * content verbatim into the database. This is the only path by which page text is stored at all,
+ * so it stays as tight as a real control label needs.
+ */
+const MAX_LABEL_CHARS = 40;
+
+/** Elements whose visible text is a control label rather than page content. */
+const TEXT_LABEL_SELECTOR = 'a, button, summary, [role="button"], [role="link"], [role="tab"], [role="menuitem"], input[type="submit"], input[type="button"]';
+
+/**
+ * This frame's own URL, when it is not the top frame.
+ *
+ * The background only ever sees `sender.tab.url`, which is the top-level page, so without this
+ * a click inside an embedded blocklisted page would be attributed to the host page and recorded.
+ */
+function frameOrigin(): string | undefined {
+  return window.top === window.self ? undefined : location.href;
 }
 
+function trimLabel(text: string): string {
+  return text.trim().replace(/\s+/g, ' ').slice(0, MAX_LABEL_CHARS);
+}
+
+/**
+ * Visible text, but only for genuine interactive controls.
+ *
+ * Narrowing this both shrinks the privacy surface and makes replay more reliable: a `text="..."`
+ * selector built from a paragraph or a list row was never going to resolve to something worth
+ * clicking anyway.
+ */
 function getVisibleText(el: Element): string {
+  if (!el.matches(TEXT_LABEL_SELECTOR) && !el.closest(TEXT_LABEL_SELECTOR)) return '';
   return trimLabel(el.textContent ?? '');
 }
 
@@ -89,7 +120,7 @@ function onClick(e: MouseEvent): void {
   const target = e.target;
   if (!(target instanceof Element)) return;
   const { selector, label } = buildClickInfo(target);
-  send({ type: 'click', selector, label });
+  send({ type: 'click', selector, label, frameUrl: frameOrigin() });
 }
 
 function onFieldChange(e: Event): void {
@@ -111,7 +142,7 @@ function onFieldChange(e: Event): void {
   const fieldType = el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase();
   const autocomplete = el.getAttribute('autocomplete');
 
-  send({ type: 'field_changed', fieldName, fieldType, autocomplete });
+  send({ type: 'field_changed', fieldName, fieldType, autocomplete, frameUrl: frameOrigin() });
 }
 
 function createTypingTracker() {
@@ -134,7 +165,7 @@ function createTypingTracker() {
     timer = setTimeout(flush, 5000);
   }
 
-  return { onKeydown };
+  return { onKeydown, flush };
 }
 
 /**
@@ -211,7 +242,7 @@ export default defineContentScript({
   // rich editors use for their hidden input surfaces.
   matchOriginAsFallback: true,
   main() {
-    const { onKeydown } = createTypingTracker();
+    const { onKeydown, flush } = createTypingTracker();
     const flip = createFocusFlipPulses();
     document.addEventListener('click', onClick, { capture: true });
     document.addEventListener('click', flip.onClick, { capture: true });
@@ -226,5 +257,8 @@ export default defineContentScript({
     // before `document`'s, regardless of registration order, so it sees the key
     // before any such handler can swallow it.
     window.addEventListener('keydown', onKeydown, { capture: true });
+    // The 5s debounce timer dies with the frame, so a burst still in progress when the user
+    // navigates or closes the tab was silently lost. pagehide is the last reliable hook.
+    window.addEventListener('pagehide', flush);
   },
 });

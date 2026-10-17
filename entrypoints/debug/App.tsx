@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { clearAll, countByKind, exportAll, getEvents } from '@/lib/db';
 import { simulateTwoPastTeamSyncs, wipeSyntheticRitualData } from '@/lib/ritual-simulation';
 import type { CadenceEvent, EventKind } from '@/lib/types';
+import { TestHarness } from './TestHarness';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -116,6 +117,8 @@ export default function App() {
         </button>
         <span>{simStatus}</span>
       </div>
+
+      <TestHarness />
 
       <div className="cards">
         <div className="card">

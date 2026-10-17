@@ -1,6 +1,6 @@
 // Background side of the leader key: built-in letters, saved-space letters, running a letter, and
 // opening the overlay (or the side-panel fallback on pages content scripts can't run on).
-import { getRituals, getSpaces } from './db';
+import { getMacros, getRituals, getSpaces } from './db';
 import { cancelFlip } from './focus-flip';
 import {
   buildMenu,
@@ -13,15 +13,19 @@ import {
   type LeaderContext,
   type LeaderShowMessage,
   type LetterCheck,
+  type MacroLetter,
   type MenuItem,
   type SearchItem,
   type SpaceLetter,
 } from './hotkeys';
+import { keepLastAsMacro, repeatLastMacro, stopRunningMacro, toggleMark } from './macro-leaders';
+import { runMacro } from './macros';
 import { openRitualDocs } from './rituals';
 import { switchToSpace } from './spaces';
 
 export const LEADER_OVERRIDES_KEY = 'leaderLetters';
 export const SPACE_LETTERS_KEY = 'spaceLetters';
+export const MACRO_LETTERS_KEY = 'macroLetters';
 /** Set when the leader key had to fall back to the side panel; the panel highlights the letter list. */
 export const LEADER_PANEL_KEY = 'leaderPanelAt';
 
@@ -45,9 +49,14 @@ export function registerBuiltinLeaders(): void {
     letter: 's',
     label: 'Stop what Cadence is doing',
     run: async () => {
-      await cancelFlip(); // cancels a Focus Flip in progress; nothing else runs long yet
+      await cancelFlip(); // a Focus Flip in progress
+      await stopRunningMacro(); // a macro replay in progress
     },
   });
+  // Repeat-to-Macro owns R / K / M (reserved in hotkeys.ts).
+  registerLeader({ id: 'macro-repeat', letter: 'r', label: 'Repeat last macro', run: repeatLastMacro, allowReserved: true });
+  registerLeader({ id: 'macro-keep', letter: 'k', label: 'Keep last action as a macro', run: keepLastAsMacro, allowReserved: true });
+  registerLeader({ id: 'macro-mark', letter: 'm', label: 'Mark macro start / end', run: toggleMark, allowReserved: true });
   registerLeader({
     id: 'pause',
     letter: 'p',
@@ -77,12 +86,26 @@ export async function getSpaceLetters(): Promise<SpaceLetter[]> {
   return spaces.flatMap((s) => (s.id !== undefined && raw[String(s.id)] ? [{ spaceId: s.id, name: s.name, letter: raw[String(s.id)]! }] : []));
 }
 
+async function getRawMacroLetters(): Promise<Record<string, string>> {
+  const { [MACRO_LETTERS_KEY]: o } = await chrome.storage.local.get<Record<string, Record<string, string> | undefined>>(MACRO_LETTERS_KEY);
+  return o ?? {};
+}
+
+/** Letters assigned to saved macros; entries for macros that no longer exist, or were rejected, are ignored. */
+export async function getMacroLetters(): Promise<MacroLetter[]> {
+  const [raw, macros] = await Promise.all([getRawMacroLetters(), getMacros()]);
+  return macros.flatMap((m) =>
+    m.id !== undefined && m.status !== 'never' && raw[String(m.id)] ? [{ macroId: m.id, name: m.name, letter: raw[String(m.id)]! }] : [],
+  );
+}
+
 async function allAssignments(): Promise<Assignment[]> {
   registerBuiltinLeaders();
-  const [overrides, spaceLetters] = await Promise.all([getLetterOverrides(), getSpaceLetters()]);
+  const [overrides, spaceLetters, macroLetters] = await Promise.all([getLetterOverrides(), getSpaceLetters(), getMacroLetters()]);
   return [
     ...listRegistrations().map((r) => ({ id: r.id, letter: effectiveLetter(r, overrides) })),
     ...spaceLetters.map((s) => ({ id: `space:${s.spaceId}`, letter: s.letter })),
+    ...macroLetters.map((m) => ({ id: `macro:${m.macroId}`, letter: m.letter })),
   ];
 }
 
@@ -106,9 +129,26 @@ export async function setSpaceLetter(spaceId: number, letter: string | null): Pr
   return check;
 }
 
+/** Same as `setSpaceLetter`, for a saved macro. R / K / M stay reserved for the macro actions themselves. */
+export async function setMacroLetter(macroId: number, letter: string | null): Promise<LetterCheck> {
+  const raw = await getRawMacroLetters();
+  if (letter === null || letter.trim() === '') {
+    delete raw[String(macroId)];
+    await chrome.storage.local.set({ [MACRO_LETTERS_KEY]: raw });
+    return { ok: true, letter: '' };
+  }
+  const check = validateLetter(letter, `macro:${macroId}`, await allAssignments(), { allowSlash: false });
+  if (check.ok) {
+    raw[String(macroId)] = check.letter;
+    await chrome.storage.local.set({ [MACRO_LETTERS_KEY]: raw });
+  }
+  return check;
+}
+
 /** HOT-1: change a built-in letter. */
 export async function setBuiltinLetter(id: string, letter: string): Promise<LetterCheck> {
-  const check = validateLetter(letter, id, await allAssignments());
+  // The macro actions own R / K / M, so moving one away must be reversible.
+  const check = validateLetter(letter, id, await allAssignments(), { allowReserved: id.startsWith('macro-') });
   if (check.ok) {
     const overrides = await getLetterOverrides();
     overrides[id] = check.letter;
@@ -119,7 +159,7 @@ export async function setBuiltinLetter(id: string, letter: string): Promise<Lett
 
 export async function getMenu(): Promise<MenuItem[]> {
   registerBuiltinLeaders();
-  return buildMenu(listRegistrations(), await getLetterOverrides(), await getSpaceLetters());
+  return buildMenu(listRegistrations(), await getLetterOverrides(), await getSpaceLetters(), await getMacroLetters());
 }
 
 export async function getSearchItems(): Promise<SearchItem[]> {
@@ -130,10 +170,14 @@ export async function getSearchItems(): Promise<SearchItem[]> {
   ];
 }
 
-/** Runs the entry on `letter`. Reserved "coming soon" letters (R/K/M until the macro feature registers) do nothing. */
+/** Runs the entry on `letter`. */
 export async function runLeaderLetter(letter: string, ctx: LeaderContext): Promise<boolean> {
   const item = findMenuItem(await getMenu(), letter);
-  if (!item || item.comingSoon) return false;
+  if (!item) return false;
+  if (item.kind === 'macro') {
+    await runMacro(Number(item.id));
+    return true;
+  }
   if (item.kind === 'space') {
     await switchToSpace(Number(item.id));
     return true;

@@ -25,7 +25,7 @@ import {
   removeSpaceUrl,
 } from './db';
 import { normalizeUrl } from './normalize';
-import { markProgrammaticNav } from './programmatic';
+import { findOpenTabIdsForUrls, focusTab, openUrlsAsGroup } from './tabs';
 import { getBlocklist, isBlocklisted } from './privacy';
 import { checkForSwitch, neverSwitchForSpace, recordSwitchOffer, type SwitchCandidate } from './switch-detection';
 import type {
@@ -326,17 +326,6 @@ async function deleteEmptyOfflineSpaces(offlineIds: Set<number | undefined>): Pr
   }
 }
 
-async function findOpenTabIdsForUrls(urls: Set<string>): Promise<number[]> {
-  const tabs = await chrome.tabs.query({});
-  const ids: number[] = [];
-  for (const tab of tabs) {
-    if (!tab.url || tab.id === undefined) continue;
-    const normalized = normalizeUrl(tab.url);
-    if (normalized && urls.has(normalized.url)) ids.push(tab.id);
-  }
-  return ids;
-}
-
 async function countOpenTabsForUrls(urls: string[]): Promise<number> {
   return (await findOpenTabIdsForUrls(new Set(urls))).length;
 }
@@ -405,15 +394,13 @@ export async function restoreSpace(spaceId: number): Promise<void> {
   const shelf = await getLatestShelfForSpace(spaceId);
   if (!shelf || shelf.urls.length === 0) return;
 
-  const tabs = await Promise.all(shelf.urls.map((u) => chrome.tabs.create({ url: u.url, active: false })));
-  const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined);
-  const firstTabId = tabIds[0];
-  if (firstTabId === undefined) return;
-
-  const groupId = await chrome.tabs.group({ tabIds: [firstTabId, ...tabIds.slice(1)] });
-  await chrome.tabGroups.update(groupId, { title: space.name, collapsed: false });
-  const createdFirstTab = await chrome.tabs.get(firstTabId);
-  await focusTab(createdFirstTab);
+  // Shared helper rather than another inline copy: it reuses a tab the user already reopened
+  // by hand, keeps the tabs in one window so grouping can succeed, and survives a group failure.
+  await openUrlsAsGroup(
+    shelf.urls.map((u) => u.url),
+    space.name,
+    { collapsed: false, focus: true },
+  );
 
   if (shelf.id !== undefined) await deleteShelf(shelf.id);
 }
@@ -447,13 +434,6 @@ export async function switchToSpace(spaceId: number): Promise<void> {
   const groupId = await chrome.tabs.group({ tabIds: [tabIds[0], ...tabIds.slice(1)] });
   await chrome.tabGroups.update(groupId, { title: space.name, collapsed: false });
   await focusTab(await chrome.tabs.get(tabIds[0]));
-}
-
-async function focusTab(tab: chrome.tabs.Tab | undefined): Promise<void> {
-  if (!tab?.id) return;
-  await markProgrammaticNav(tab.id);
-  await chrome.tabs.update(tab.id, { active: true });
-  if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
 }
 
 async function isSidePanelOpen(): Promise<boolean> {
