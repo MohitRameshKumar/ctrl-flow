@@ -1,0 +1,8 @@
+node_modules
+.output
+.wxt
+dist
+*.local
+
+# Extension signing key — never commit, generate locally with scripts/gen-key.sh
+extension-key.pem

@@ -1,0 +1,10 @@
+{
+  "series": [
+    {
+      "title": "Team sync",
+      "durationMinutes": 30,
+      "intervalHours": 3,
+      "days": 3
+    }
+  ]
+}
