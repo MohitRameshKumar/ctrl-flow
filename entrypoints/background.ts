@@ -560,7 +560,7 @@ export default defineBackground(() => {
 
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
-    recordNavigation(details.tabId, details.url, true);
+    recordNavigation(details.tabId, details.url);
   });
 
   // Single-page apps change the URL without committing a navigation, so `onCommitted` alone sees
@@ -569,7 +569,7 @@ export default defineBackground(() => {
   // repetitive work worth learning.
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.frameId !== 0) return;
-    recordNavigation(details.tabId, details.url);
+    recordNavigation(details.tabId, details.url, true); // in-page navigation: Leader R ignores it unless you clicked
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
