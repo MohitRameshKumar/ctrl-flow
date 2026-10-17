@@ -437,6 +437,8 @@ export interface Macro {
   /** Optional for the same reason; read through `withMacroDefaults` to get a filled-in value. */
   stats?: MacroStats;
   trigger?: MacroTrigger;
+  /** Cadence-side: if a page is already open, switch to it instead of opening a new tab. Default (unset) opens a new tab. */
+  reuseOpenTabs?: boolean;
   lastRunAt?: number;
   lastRunResult?: MacroRunResult;
   createdAt: number;

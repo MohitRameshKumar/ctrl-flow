@@ -1,16 +1,20 @@
 // Leader R fixtures modelled on the manual test: browse a bit, then open Wikipedia -> news -> GitHub.
 import { describe, expect, it } from 'vitest';
-import { eventToAction } from '@/lib/macro-detection';
+import { applyCandidate, eventToAction, matchExistingMacro, mintMacroKey } from '@/lib/macro-detection';
+import { executeMacro } from '@/lib/macro-executor';
 import {
   PREVIEW_MAX_STEPS,
+  REPLAY_TAIL_MS,
   describeSteps,
+  nameOpenMacro,
   lastSegment,
   planRepeat,
   previewText,
   segmentStart,
 } from '@/lib/macro-repeat';
 import type { CadenceEvent, ObservedAction } from '@/lib/types';
-import { macro, openStep } from './helpers';
+import { A, B, macro, openStep } from './helpers';
+import { createFakeHost, freshRunState } from './fake-host';
 
 const NOW = 10_000_000;
 const WIKI = 'https://en.wikipedia.org/wiki/Cadence';
@@ -136,15 +140,16 @@ describe('Leader R preview text', () => {
     const plan = planRepeat(lastSegment(actions(task()), since(), NOW), []);
     const { runnable, text } = previewText(plan);
     expect(runnable).toBe(true);
-    expect(text).toMatch(/^Repeat 3 steps: Wikipedia → Nytimes → GitHub\. Enter to run, Esc to cancel\.$/);
+    expect(text).toBe('Repeat 3 steps: Open Wikipedia → Open NYT → Open GitHub. Enter run & save · Esc cancel');
   });
 
   it('caps at 10 steps and says how many more', () => {
-    const urls = Array.from({ length: 13 }, (_, i) => `https://site${i}.example.com/`);
+    const urls = Array.from({ length: 13 }, (_, i) => `https://site${i}.com/`);
     const { count, text } = describeSteps(urls);
     expect(count).toBe(13);
     expect(text.split(' → ').length).toBe(PREVIEW_MAX_STEPS + 1);
     expect(text.endsWith('+3 more')).toBe(true);
+    expect(text.startsWith('Open Site0')).toBe(true);
   });
 
   it('falls back to the last-run macro and says so; says nothing-to-repeat when there is none', () => {
@@ -152,9 +157,65 @@ describe('Leader R preview text', () => {
     const newer = { ...macro({ steps: [openStep(NYT), openStep(GH)] }), id: 2, name: 'Morning', lastRunAt: 99 };
     const plan = planRepeat(null, [older, newer]);
     expect(plan.via).toBe('last-macro');
-    expect(previewText(plan).text).toMatch(/^No recent action\. Repeat last macro "Morning" \(2 steps: /);
+    expect(previewText(plan).text).toMatch(/^No recent action\. Repeat last macro "Morning" \(2 steps: Open NYT → Open GitHub\)\? Enter run · Esc cancel$/);
     expect(planRepeat(null, [{ ...older, lastRunAt: undefined }]).via).toBe('none');
     expect(planRepeat(null, [{ ...newer, status: 'never' }]).via).toBe('none');
     expect(previewText({ via: 'none' }).runnable).toBe(false);
+  });
+});
+
+describe('recording an "open these pages" macro', () => {
+  it('opened pages are open_url steps with their final URL even though those tabs are still open', () => {
+    // Tabs 10-12 are still open "now"; the segment must still describe them as opens, not switches.
+    const seg = lastSegment(actions(task()), since(), NOW)!;
+    expect(seg.candidate.steps.map((s) => [s.kind, s.url])).toEqual([
+      ['open_url', WIKI],
+      ['open_url', NYT],
+      ['open_url', GH],
+    ]);
+  });
+
+  it('tabs that existed before the segment contribute nothing (their activations are dropped)', () => {
+    const events = [ev(10_000, 'tab_activated', 1, 'https://mail.example.com/'), ...task()];
+    expect(urlsOf(lastSegment(actions(events), since(), NOW))).toEqual([WIKI, NYT, GH]);
+  });
+
+  it('auto-names as "Open A, B, C", shortens known sites, caps the list and stays unique', () => {
+    expect(nameOpenMacro([WIKI, NYT, GH])).toBe('Open Wikipedia, NYT, GitHub');
+    const many = ['a', 'b', 'c', 'd', 'e', 'f'].map((x) => `https://${x}.com/`);
+    expect(nameOpenMacro(many)).toBe('Open A, B, C, D +2 more');
+    expect(nameOpenMacro([WIKI, NYT, GH], new Set(['Open Wikipedia, NYT, GitHub']))).toBe('Open Wikipedia, NYT, GitHub (2)');
+  });
+
+  it('pressing Enter twice on the same routine finds the stored macro instead of making a duplicate', () => {
+    const seg = lastSegment(actions(task()), since(), NOW)!;
+    const stored = { ...applyCandidate(null, seg.candidate, nameOpenMacro([WIKI, NYT, GH]), mintMacroKey(seg.candidate), NOW), id: 7 };
+    const again = lastSegment(actions(task()), since(), NOW)!;
+    expect(mintMacroKey(again.candidate)).toBe(stored.macroKey);
+    expect(matchExistingMacro([stored], again.candidate)?.id).toBe(7);
+  });
+
+  it("a replay's late page loads (just after it ends) do not seed the next segment", () => {
+    const replayEnd = NOW - 3_000;
+    const late = [ev(2_000, 'navigated', 40, 'https://late-a.example.com/'), ev(1_500, 'tab_opened', 41, 'https://late-b.example.com/')];
+    expect(since({ lastRunEnd: replayEnd })).toBe(replayEnd + REPLAY_TAIL_MS);
+    expect(lastSegment(actions(late), since({ lastRunEnd: replayEnd }), NOW)).toBeNull();
+  });
+});
+
+describe('replay opens new tabs by default', () => {
+  const pages = () => macro({ steps: [openStep(A), openStep(B)] });
+
+  it('opens a new tab for a page that is already open, and groups the tabs it created', async () => {
+    const host = createFakeHost({ openTabs: { [A]: 3 } });
+    await executeMacro(pages(), host, freshRunState(), { mode: 'guided' });
+    expect(host.trace.filter((t) => t.startsWith('open:'))).toEqual([`open:${A}:active`, `open:${B}:active`]);
+    expect(host.trace.some((t) => t.startsWith('group:'))).toBe(true);
+  });
+
+  it('with "Switch to it", reuses the open tab and opens only what is missing', async () => {
+    const host = createFakeHost({ openTabs: { [A]: 3 } });
+    await executeMacro({ ...pages(), reuseOpenTabs: true }, host, freshRunState(), { mode: 'guided' });
+    expect(host.trace.filter((t) => t.startsWith('open:'))).toEqual([`open:${B}:active`]);
   });
 });

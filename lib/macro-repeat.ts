@@ -14,6 +14,9 @@ export const REDIRECT_CHAIN_MS = 4 * 1000;
 /** An in-page (history API) navigation only counts if the user clicked in that tab this recently. */
 export const SPA_CLICK_WINDOW_MS = 5 * 1000;
 export const PREVIEW_MAX_STEPS = 10;
+/** Page loads from a replay's tabs can land just after the run is recorded as finished. */
+export const REPLAY_TAIL_MS = 5 * 1000;
+export const NAME_MAX_SITES = 4;
 
 /**
  * Turns the raw action log into what the user deliberately did:
@@ -70,7 +73,8 @@ export interface RepeatBoundaries {
 
 /** Segment start = the most recent of: the age limit, a replay end, a previous K/R/M, or an M mark. */
 export function segmentStart(now: number, b: RepeatBoundaries): number {
-  return Math.max(now - SEGMENT_MAX_AGE_MS, b.lastRunEnd ?? 0, b.lastConsumed ?? 0, b.markStart ?? 0);
+  const afterReplay = b.lastRunEnd ? b.lastRunEnd + REPLAY_TAIL_MS : 0;
+  return Math.max(now - SEGMENT_MAX_AGE_MS, afterReplay, b.lastConsumed ?? 0, b.markStart ?? 0);
 }
 
 export interface RepeatSegment {
@@ -103,9 +107,26 @@ export function planRepeat(segment: RepeatSegment | null, macros: Macro[]): Repe
   return last ? { via: 'last-macro', macro: last } : { via: 'none' };
 }
 
-/** "Wikipedia → NYT → GitHub", capped, with "+N more". Only enabled open steps (clicks are opt-in). */
+/** Short names people say out loud, on top of `prettyDomain`. */
+const SITE_ALIASES: Record<string, string> = { nytimes: 'NYT', wsj: 'WSJ', bbc: 'BBC', cnn: 'CNN' };
+
+export function siteName(url: string): string {
+  const pretty = prettyDomain(domainOf(url) ?? url);
+  return SITE_ALIASES[pretty.toLowerCase()] ?? pretty;
+}
+
+/** "Open Wikipedia, NYT, GitHub": the auto-name for a macro that opens pages. Unique among `taken`. */
+export function nameOpenMacro(urls: string[], taken: Set<string> = new Set()): string {
+  const sites = [...new Set(urls.map(siteName))];
+  const shown = sites.slice(0, NAME_MAX_SITES).join(', ');
+  const base = `Open ${shown}${sites.length > NAME_MAX_SITES ? ` +${sites.length - NAME_MAX_SITES} more` : ''}` || 'Open pages';
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base} (${n})`)) return `${base} (${n})`;
+}
+
+/** "Open Wikipedia → Open NYT → Open GitHub", capped, with "+N more". Only enabled open steps (clicks are opt-in). */
 export function describeSteps(urls: string[]): { count: number; text: string } {
-  const names = urls.map((u) => prettyDomain(domainOf(u) ?? u));
+  const names = urls.map((u) => `Open ${siteName(u)}`);
   const shown = names.slice(0, PREVIEW_MAX_STEPS).join(' → ');
   const extra = names.length - PREVIEW_MAX_STEPS;
   return { count: names.length, text: extra > 0 ? `${shown} → +${extra} more` : shown };
@@ -125,7 +146,7 @@ export function previewText(plan: RepeatPlan): { runnable: boolean; text: string
     runnable: true,
     text:
       plan.via === 'segment'
-        ? `Repeat ${steps}: ${text}. Enter to run, Esc to cancel.`
-        : `No recent action. Repeat last macro "${plan.macro.name}" (${steps}: ${text})? Enter to run, Esc to cancel.`,
+        ? `Repeat ${steps}: ${text}. Enter run & save · Esc cancel`
+        : `No recent action. Repeat last macro "${plan.macro.name}" (${steps}: ${text})? Enter run · Esc cancel`,
   };
 }

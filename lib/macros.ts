@@ -116,6 +116,8 @@ export async function recordMacroFromRecentActivity(
     toTs: number;
     refine?: (actions: ObservedAction[]) => ObservedAction[];
     reuseExisting?: boolean;
+    /** Names a new macro from its candidate (e.g. "Open Wikipedia, NYT, GitHub"); default is `nameMacro`. */
+    nameFor?: (candidate: MacroCandidate, taken: Set<string>) => string;
   },
 ): Promise<Macro | null> {
   const now = Date.now();
@@ -129,7 +131,7 @@ export async function recordMacroFromRecentActivity(
     if (match) return match;
   }
   const taken = new Set(existing.map((m) => m.name));
-  const name = nameMacro(candidate, existing.length, taken);
+  const name = window?.nameFor ? window.nameFor(candidate, taken) : nameMacro(candidate, existing.length, taken);
 
   const macro = applyCandidate(null, candidate, name, mintMacroKey(candidate), now);
   // The user asked for this one explicitly, so it does not need to be offered back to them.

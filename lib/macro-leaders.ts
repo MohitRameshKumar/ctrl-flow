@@ -6,6 +6,7 @@ import { getMacros } from './db';
 import type { LeaderContext, LeaderRepeatPreviewMessage } from './hotkeys';
 import {
   lastSegment,
+  nameOpenMacro,
   planRepeat,
   previewText,
   refineSegment,
@@ -19,6 +20,7 @@ import {
   runMacro,
 } from './macros';
 import { getBlocklist, isBlocklisted } from './privacy';
+import type { MacroCandidate } from './types';
 import { isTerminal, readRunState, sendRunCommand } from './macro-run-channel';
 
 const MARK_START_KEY = 'macroMarkStart';
@@ -44,6 +46,8 @@ async function tell(title: string, message: string): Promise<void> {
     console.warn('[cadence] macro leader notification failed', err);
   }
 }
+
+const openUrls = (c: MacroCandidate): string[] => c.steps.filter((s) => s.kind === 'open_url').map((s) => s.url);
 
 async function readSession<T>(key: string): Promise<T | undefined> {
   const stored = await chrome.storage.session.get<Record<string, T | undefined>>(key);
@@ -129,7 +133,10 @@ export async function confirmRepeat(): Promise<void> {
     let macroId: number | undefined;
     if (plan.via === 'segment') {
       // The same function Leader K uses, over the window the preview was built from.
-      const macro = await recordMacroFromRecentActivity({ ...plan.segment.window, refine: refineSegment, reuseExisting: true });
+      const macro = await recordMacroFromRecentActivity({ ...plan.segment.window, refine: refineSegment,
+        reuseExisting: true,
+        nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
+      });
       macroId = macro?.id;
     } else if (plan.via === 'last-macro') {
       macroId = plan.macro.id;
@@ -169,6 +176,8 @@ export async function keepLastAsMacro(): Promise<void> {
     fromTs: Math.max(now - MACRO_RECORD_WINDOW_MS, consumed),
     toTs: now,
     refine: refineSegment,
+    reuseExisting: true,
+    nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
   });
   if (macro) await markConsumed(now);
   if (!macro) {
@@ -188,7 +197,13 @@ export async function toggleMark(): Promise<void> {
     return;
   }
   await chrome.storage.session.remove(MARK_START_KEY);
-  const macro = await recordMacroFromRecentActivity({ fromTs: start, toTs: now, refine: refineSegment });
+  const macro = await recordMacroFromRecentActivity({
+    fromTs: start,
+    toTs: now,
+    refine: refineSegment,
+    reuseExisting: true,
+    nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
+  });
   await markConsumed(now);
   if (!macro) {
     await tell('Nothing to keep', 'No repeatable steps between the two marks.');

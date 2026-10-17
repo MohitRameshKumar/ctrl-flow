@@ -395,9 +395,9 @@ describe('failure policy', () => {
     expect(outcome(result.outcomes, `click:${A}|#go`)?.error).toMatch(/did not finish loading/);
   });
 
-  it('reuses an already-open tab instead of duplicating it', async () => {
+  it('with the "switch to it" option, reuses an already-open tab instead of duplicating it', async () => {
     const host = createFakeHost({ openTabs: { [A]: 3 } });
-    await executeMacro(macro({ steps: [openStep(A), openStep(B)] }), host, freshRunState(), guided);
+    await executeMacro(macro({ steps: [openStep(A), openStep(B)], reuseOpenTabs: true }), host, freshRunState(), guided);
     expect(host.trace.filter((t) => t.startsWith('open:'))).toEqual([`open:${B}:active`]);
   });
 });
@@ -471,7 +471,7 @@ describe('close_tabs', () => {
   it('closes only the tabs this run created', async () => {
     const host = createFakeHost({ openTabs: { [A]: 3 } });
     const close = step({ key: 'close:1', kind: 'close_tabs' });
-    const target = macro({ steps: [openStep(A), openStep(B), close] });
+    const target = macro({ steps: [openStep(A), openStep(B), close], reuseOpenTabs: true });
 
     await executeMacro(target, host, freshRunState(), guided);
 

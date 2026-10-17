@@ -332,6 +332,7 @@ export async function executeMacro(
       createdTabIds,
       failedTabs,
       macroName: macro.name,
+      reuseOpenTabs: macro.reuseOpenTabs === true,
       index,
       phase,
       sleepAlive,
@@ -374,6 +375,8 @@ interface StepContext {
   createdTabIds: Set<number>;
   failedTabs: Set<number>;
   macroName: string;
+  /** Per-macro option; default false = `open_url` always opens a new tab. */
+  reuseOpenTabs: boolean;
   index: number;
   phase: string;
   sleepAlive: (ms: number, index: number, phase: string) => Promise<void>;
@@ -407,11 +410,16 @@ async function runStep(step: MacroStep, ctx: StepContext): Promise<Outcome> {
 }
 
 async function doOpen(step: MacroStep, ctx: StepContext): Promise<Outcome> {
-  const existing = ctx.tabIdByUrl.get(step.url) ?? (await ctx.host.findTabForUrl(step.url));
-  if (existing !== undefined) {
-    ctx.tabIdByUrl.set(step.url, existing);
-    if (ctx.mode === 'guided') await ctx.host.focusTab(existing);
-    return { status: 'ok', tabId: existing };
+  // Cadence-side: by default an open step opens a new tab even if the page is already open somewhere
+  // (the macro should do what the user did, and still work when those tabs are gone). The per-macro
+  // "switch to it" option restores the old reuse.
+  if (ctx.reuseOpenTabs) {
+    const existing = ctx.tabIdByUrl.get(step.url) ?? (await ctx.host.findTabForUrl(step.url));
+    if (existing !== undefined) {
+      ctx.tabIdByUrl.set(step.url, existing);
+      if (ctx.mode === 'guided') await ctx.host.focusTab(existing);
+      return { status: 'ok', tabId: existing };
+    }
   }
 
   // Guided brings each page to the front as it opens, which is the whole point of the mode.
