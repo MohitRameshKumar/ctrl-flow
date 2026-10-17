@@ -88,8 +88,8 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** a notification "Macro saved" with a name; it appears in the Macros tab. With nothing recent: "Nothing to keep".
 6. [ ] **Leader M** (mark start/end): leader → **M** ("Macro recording started"); do a routine; leader → **M** again.
    **Expected:** second press saves a macro from everything between the two marks. A forgotten first mark expires after 10 min.
-7. [ ] **Leader R** (repeat last macro): leader → **R**.
-   **Expected:** the most recently run macro runs again. If none has run: notification "Nothing to repeat yet".
+7. [ ] **Leader R** (repeat last action): open 2–3 sites, wait ~5 s, then leader → **R**.
+   **Expected:** notification "Repeating last action" with a name; that routine replays and is saved in the Macros tab. With no recent action (wait 10+ min) but a macro run earlier: "No recent action — repeating last macro". With neither: "Nothing to repeat yet". The overlay label reads *Repeat last action (else last macro)*.
 8. [ ] On a saved macro, assign a leader letter (not R/K/M).
    **Expected:** leader overlay now lists *Macro: <name>* under that letter; pressing it runs the macro. Deleting/rejecting the macro drops the letter.
 9. [ ] **Leader S mid-replay:** start a macro with a *Wait* step (Add step → *Wait a moment*, 10 s) in Guided/Slow mode; press leader → **S**.
@@ -144,3 +144,15 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** no crash or spinner stuck; Standup/Coverage show the **local fallback** markdown; spaces get local names; macros still suggest, name and run (they never use the network).
 2. [ ] Restore network and regenerate.
    **Expected:** the normal AI-written version returns.
+
+## 12. Privacy hardening (macros)
+1. [ ] Payment fields: Add step → *Type text* with a selector like `#card-number`; on a checkout page with `autocomplete="cc-number"` / a "Card number" label, run a macro that types into it.
+   **Expected:** save is refused for payment-looking selectors; at replay the step fails with "refused: payment or credential field" and nothing is typed. Clicking inside such a field records no click event.
+2. [ ] Blocklist at replay: save a macro that opens `example.org`, then add `example.org` to *Never record these sites*, run the macro.
+   **Expected:** the run stops at that step: "Stopped at step N (…): example.org is on your excluded sites"; later steps show skipped; the site is not opened.
+3. [ ] Param redaction: a macro with a `{var}` URL segment, visited with ids like an email, UUID or long doc id.
+   **Expected:** Run form asks for the value (nothing remembered for tokens/emails); stored examples are at most 3 and contain only short ids/slugs.
+4. [ ] Standup/Coverage: exclude a domain that appears in a space and a ritual's links, regenerate both, open *Show last AI request*.
+   **Expected:** that domain appears nowhere in the request or the output.
+5. [ ] Typed values: Add step → Type text: `hello` saves; `password: x`, a card number, or text on an excluded page is refused with a reason. Check the debug event list.
+   **Expected:** no typed text in any event (only key counts / field names).

@@ -54,7 +54,7 @@ export function registerBuiltinLeaders(): void {
     },
   });
   // Repeat-to-Macro owns R / K / M (reserved in hotkeys.ts).
-  registerLeader({ id: 'macro-repeat', letter: 'r', label: 'Repeat last macro', run: repeatLastMacro, allowReserved: true });
+  registerLeader({ id: 'macro-repeat', letter: 'r', label: 'Repeat last action (else last macro)', run: repeatLastMacro, allowReserved: true });
   registerLeader({ id: 'macro-keep', letter: 'k', label: 'Keep last action as a macro', run: keepLastAsMacro, allowReserved: true });
   registerLeader({ id: 'macro-mark', letter: 'm', label: 'Mark macro start / end', run: toggleMark, allowReserved: true });
   registerLeader({

@@ -80,6 +80,8 @@ export interface RunHost {
   probe(tabId: number, selector: string): Promise<boolean>;
   click(tabId: number, selector: string): Promise<{ clicked: boolean; reason?: string }>;
   type(tabId: number, selector: string, text: string): Promise<{ ok: boolean; reason?: string }>;
+  /** Cadence-side: true when the URL is on the current exclusions list. Optional so existing fakes still work. */
+  isUrlBlocked?(url: string): Promise<boolean>;
 
   /** Publishes progress. Doubles as the keepalive — see `MACRO_HEARTBEAT_MS`. */
   publish(state: MacroRunState): Promise<void>;
@@ -290,6 +292,23 @@ export async function executeMacro(
       skipRequested = false;
       outcomes.set(step.key, { stepKey: step.key, status: 'skipped', error: 'skipped by user' });
       continue;
+    }
+
+    // Exclusions can change after a macro was saved: re-check every step that touches a URL, and
+    // stop the whole run (not just the step) when one is blocked.
+    if (step.url && host.isUrlBlocked && (await host.isUrlBlocked(step.url))) {
+      const domain = (() => {
+        try {
+          return new URL(step.url).hostname;
+        } catch {
+          return step.url;
+        }
+      })();
+      const why = `Stopped at step ${index + 1} (${phase}): ${domain} is on your excluded sites`;
+      outcomes.set(step.key, { stepKey: step.key, status: 'failed', error: why });
+      state.phase = why;
+      stopped = true;
+      break;
     }
 
     await publish('running', index, phase);

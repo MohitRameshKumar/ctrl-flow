@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie';
 import { recordRun, runWasClean } from './macro-learning';
-import { looksSensitiveText } from './privacy';
+import { checkTypedStep, sanitizeParams } from './macro-privacy';
+import { getBlocklist } from './privacy';
 import type {
   CadenceEvent,
   EventKind,
@@ -254,7 +255,7 @@ export const EMPTY_MACRO_STATS: MacroStats = {
 export function withMacroDefaults(macro: Macro): NormalizedMacro {
   return {
     ...macro,
-    params: macro.params ?? [],
+    params: sanitizeParams(macro.params), // redacted on read too, so rows stored before the rule are cleaned
     stats: { ...EMPTY_MACRO_STATS, ...(macro.stats ?? {}) },
   };
 }
@@ -274,7 +275,7 @@ export async function getMacroByKey(macroKey: string): Promise<NormalizedMacro |
 }
 
 export function putMacro(macro: Macro): Promise<number | undefined> {
-  return db.macros.put(macro);
+  return db.macros.put(macro.params ? { ...macro, params: sanitizeParams(macro.params) } : macro);
 }
 
 export async function updateMacroStatus(id: number, status: Macro['status']): Promise<void> {
@@ -334,10 +335,10 @@ export async function moveMacroStep(id: number, stepKey: string, delta: number):
  * the next recompute would treat it as noise and drop it.
  */
 export async function addMacroStep(id: number, step: MacroStep): Promise<void> {
-  // Hand-typed step text is stored in plain text on this device. Never let a secret or card number
-  // in (macro privacy rule); the caller surfaces the message.
-  if (step.kind === 'type' && step.text && looksSensitiveText(step.text)) {
-    throw new Error('That text looks like a password, token or card number, so it was not saved.');
+  // The single gate for typed values (lib/macro-privacy.ts). The caller surfaces the message.
+  if (step.kind === 'type' && step.text) {
+    const check = checkTypedStep({ text: step.text, url: step.url, selector: step.selector }, await getBlocklist());
+    if (!check.ok) throw new Error(`${check.reason} Not saved.`);
   }
   const macro = await db.macros.get(id);
   if (!macro) return;

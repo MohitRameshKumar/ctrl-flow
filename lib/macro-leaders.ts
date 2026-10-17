@@ -1,7 +1,10 @@
 // Leader-key actions for Repeat-to-Macro. Everything here is a thin caller over the teammate's own
 // functions (`runMacro`, `recordMacroFromRecentActivity`, the run channel); no detection or replay
 // logic lives in this file.
-import { getMacros } from './db';
+import { getMacros, putMacro } from './db';
+import { applyCandidate, matchExistingMacro, mintMacroKey, nameMacro } from './macro-detection';
+import { SEGMENT_MAX_AGE_MS, lastCompletedSegment, planRepeat } from './macro-repeat';
+import { chromeActionSource } from './macro-source';
 import {
   MACRO_NOTIFICATION_PREFIX,
   recordMacroFromRecentActivity,
@@ -27,17 +30,42 @@ async function tell(title: string, message: string): Promise<void> {
   }
 }
 
-/** R: run the macro that ran most recently. */
+/**
+ * R: repeat the last action. Builds (or finds) the macro for the most recent completed segment of
+ * activity and runs it; with nothing recent enough, falls back to the last-run macro and says so.
+ */
 export async function repeatLastMacro(): Promise<void> {
-  const ran = (await getMacros())
-    .filter((m) => m.id !== undefined && m.status !== 'never' && m.lastRunAt !== undefined)
-    .sort((a, b) => (b.lastRunAt ?? 0) - (a.lastRunAt ?? 0));
-  const last = ran[0];
-  if (last?.id === undefined) {
-    await tell('Nothing to repeat yet', 'Run a macro first, or press K to keep what you just did as one.');
-    return;
+  const now = Date.now();
+  const [actions, macros] = await Promise.all([
+    chromeActionSource.getActions(now - SEGMENT_MAX_AGE_MS, now),
+    getMacros(),
+  ]);
+  const plan = planRepeat(lastCompletedSegment(actions, now), macros);
+
+  try {
+    if (plan.via === 'none') {
+      await tell('Nothing to repeat yet', 'No recent action, and no macro has run. Press K to keep what you do as a macro.');
+      return;
+    }
+    if (plan.via === 'last-macro') {
+      await tell('No recent action — repeating last macro', plan.macro.name);
+      await runMacro(plan.macro.id!);
+      return;
+    }
+    const candidate = plan.candidate;
+    let macro = matchExistingMacro(macros, candidate);
+    if (!macro) {
+      const taken = new Set(macros.map((m) => m.name));
+      const fresh = applyCandidate(null, candidate, nameMacro(candidate, macros.length, taken), mintMacroKey(candidate), now);
+      fresh.status = 'accepted'; // the user asked for it, same as K
+      const id = await putMacro(fresh);
+      macro = { ...fresh, id };
+    }
+    await tell('Repeating last action', macro.name);
+    if (macro.id !== undefined) await runMacro(macro.id);
+  } catch (err) {
+    await tell('Could not repeat', err instanceof Error ? err.message : String(err));
   }
-  if ((await runMacro(last.id)) === null) await tell('Could not run macro', last.name);
 }
 
 /** K: keep the last ~30 seconds of activity as a macro. */

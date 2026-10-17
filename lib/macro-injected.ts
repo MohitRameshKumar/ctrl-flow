@@ -118,6 +118,27 @@ export function typeIntoSelector(selector: string, text: string): TypeResult {
     return { ok: false, reason: 'refused: credential field' };
   }
 
+  // Cadence-side: payment and one-time-code fields too. Inline because an injected function cannot
+  // import; the pattern mirrors SENSITIVE_RE in lib/privacy.ts (a test keeps them in step).
+  const ac = (el.getAttribute('autocomplete') ?? '').toLowerCase();
+  const labelText = Array.from((el as HTMLInputElement).labels ?? [])
+    .map((l) => l.textContent ?? '')
+    .join(' ');
+  const hint = [el.getAttribute('name'), el.id, el.getAttribute('aria-label'), el.getAttribute('placeholder'), labelText]
+    .filter(Boolean)
+    .join(' ');
+  const sensitiveHint =
+    /pass|card|cvv|cvc|csc|ssn|pin|routing|account|expir|exp[-_ ]?(date|month|year|mm|yy)|ccnum|cc[-_ ]?(num|exp|csc|number)|iban|security[-_ ]?code|one[-_ ]?time|otp/i;
+  if (
+    ac.startsWith('cc-') ||
+    ac === 'current-password' ||
+    ac === 'new-password' ||
+    ac === 'one-time-code' ||
+    sensitiveHint.test(hint)
+  ) {
+    return { ok: false, reason: 'refused: payment or credential field' };
+  }
+
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     const proto =
       el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;

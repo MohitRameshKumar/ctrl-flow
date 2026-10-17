@@ -115,10 +115,26 @@ function buildClickInfo(el: Element): { selector: string; label?: string } {
   return { selector: cssPath(el), label: undefined };
 }
 
+/** name / id / aria-label / placeholder / <label> text of a form control, for sensitivity checks. */
+function fieldHint(el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement): string {
+  const labels = Array.from(el.labels ?? []).map((l) => l.textContent ?? '');
+  return [el.name, el.id, el.getAttribute('aria-label'), el.getAttribute('placeholder'), ...labels]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function isSensitiveControl(el: Element | null): boolean {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) return false;
+  const type = el instanceof HTMLInputElement ? el.type : el.tagName.toLowerCase();
+  return isSensitiveField(type, el.getAttribute('autocomplete'), fieldHint(el));
+}
+
 function onClick(e: MouseEvent): void {
   if (leaderOverlayOpen()) return;
   const target = e.target;
   if (!(target instanceof Element)) return;
+  // A click inside a password / payment field says where that field is; don't record it at all.
+  if (isSensitiveControl(target.closest('input, select, textarea'))) return;
   const { selector, label } = buildClickInfo(target);
   send({ type: 'click', selector, label, frameUrl: frameOrigin() });
 }
@@ -132,6 +148,9 @@ function onFieldChange(e: Event): void {
   ) {
     return;
   }
+
+  // Sensitive controls (including by <label> text) are dropped at the source, not just filtered later.
+  if (isSensitiveControl(el)) return;
 
   const fieldName =
     el.name ||

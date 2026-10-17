@@ -143,6 +143,9 @@ export async function runMacro(
 
   const [settingMode, speed] = await Promise.all([getRunMode(), getRunSpeed()]);
   const mode = options.mode ?? settingMode;
+  // Parameter values that were redacted (ids, tokens, emails) are never remembered, so they must be supplied.
+  const missing = (macro.params ?? []).filter((p) => !p.lastValue && !options.params?.[p.name]?.trim());
+  if (missing.length > 0) throw new Error(`Enter a value for ${missing.map((p) => `{${p.name}}`).join(', ')} first.`);
   // Substituted before execution so the engine only ever sees concrete URLs. Any parameter the
   // caller did not supply falls back to its last observed value, so a macro is always runnable.
   const resolved = applyParams(macro, options.params);

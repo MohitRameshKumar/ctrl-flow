@@ -43,7 +43,12 @@ export function isBlocklisted(domain: string, blocklist: BlocklistConfig): boole
   });
 }
 
-const SENSITIVE_RE = /pass|card|cvv|cvc|ssn|pin|routing|account/i;
+/**
+ * Field names/ids/labels that mark a credential or payment input. `macro-injected.ts` carries an
+ * inline copy (an injected function cannot import); tests/type-step.test.ts keeps the two in step.
+ */
+export const SENSITIVE_RE =
+  /pass|card|cvv|cvc|csc|ssn|pin|routing|account|expir|exp[-_ ]?(date|month|year|mm|yy)|ccnum|cc[-_ ]?(num|exp|csc|number)|iban|security[-_ ]?code|one[-_ ]?time|otp/i;
 
 export function isSensitiveField(
   fieldType: string,
@@ -53,7 +58,7 @@ export function isSensitiveField(
   if (fieldType === 'password' || fieldType === 'hidden') return true;
 
   const ac = (autocomplete ?? '').toLowerCase();
-  if (ac.startsWith('cc-') || ac === 'current-password' || ac === 'new-password') return true;
+  if (ac.startsWith('cc-') || ac === 'current-password' || ac === 'new-password' || ac === 'one-time-code') return true;
 
   if (fieldName && SENSITIVE_RE.test(fieldName)) return true;
 
@@ -107,4 +112,13 @@ export function looksSensitiveText(text: string): boolean {
   if (/\b(pass(word|wd)?|pwd|secret|token|api[_-]?key)\s*[:=]\s*\S+/i.test(text)) return true;
   if (/^[A-Za-z0-9+/_=-]{32,}$/.test(text.trim())) return true; // one long unbroken token
   return false;
+}
+
+/** Is this URL's host on the (current) blocklist / exclusions list? Unparseable URLs are not blocked. */
+export function isUrlBlocked(url: string, blocklist: BlocklistConfig): boolean {
+  try {
+    return isBlocklisted(new URL(url).hostname, blocklist);
+  } catch {
+    return false;
+  }
 }

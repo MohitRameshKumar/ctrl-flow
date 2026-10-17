@@ -1,7 +1,7 @@
 // Pure builders for the Standup draft and Coverage Doc. No chrome.* / Dexie here, so everything is
 // unit-testable with plain `node --test`. What these functions return is exactly what leaves the
 // device: titles, URLs, domains, durations, counts and event names. Never page content or typed text.
-import { isBlocklisted } from './privacy.ts';
+import { isBlocklisted, isUrlBlocked } from './privacy.ts';
 import type { BlocklistConfig, CadenceEvent, CalendarEvent, Ritual, Space, SpaceUrl } from './types.ts';
 
 const MIN_MS = 60 * 1000;
@@ -203,6 +203,11 @@ function isMeetingHost(host: string): boolean {
   return MEETING_JOIN_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
+/** Space and ritual URLs come from stored rows, not events, so they need their own blocklist pass. */
+export function allowedUrls<T extends { url: string }>(items: T[], blocklist: BlocklistConfig): T[] {
+  return items.filter((u) => !isUrlBlocked(u.url, blocklist));
+}
+
 export function buildStandupInput(raw: RawStandupData): StandupInput {
   const { range, now } = raw;
   const events = usableEvents(raw.events, raw.blocklist);
@@ -217,7 +222,7 @@ export function buildStandupInput(raw: RawStandupData): StandupInput {
   }
 
   const spaceNameById = new Map(raw.spaces.map((s) => [s.id, s.name]));
-  const spaceByUrl = new Map(raw.spaceUrls.map((u) => [u.url, u.spaceId]));
+  const spaceByUrl = new Map(allowedUrls(raw.spaceUrls, raw.blocklist).map((u) => [u.url, u.spaceId]));
   const msBySpace = new Map<string, number>();
   for (const [url, v] of msByUrl) {
     const name = spaceNameById.get(spaceByUrl.get(url));
@@ -376,7 +381,9 @@ export function buildCoverageInput(raw: RawCoverageData): CoverageInput {
     list.push(c);
     bySeries.set(c.seriesKey, list);
   }
-  const ritualBySeries = new Map(raw.rituals.map((r) => [r.seriesKey, r]));
+  // Ritual links and space tabs are stored rows: drop blocklisted/excluded hosts before they can leave the device.
+  const rituals0 = raw.rituals.map((r) => ({ ...r, urls: allowedUrls(r.urls, raw.blocklist) }));
+  const ritualBySeries = new Map(rituals0.map((r) => [r.seriesKey, r]));
 
   const recurringMeetings = [...bySeries.entries()]
     .flatMap(([seriesKey, list]) => {
@@ -397,7 +404,7 @@ export function buildCoverageInput(raw: RawCoverageData): CoverageInput {
     .sort((a, b) => b.occurrencesInRange - a.occurrencesInRange)
     .slice(0, MAX_MEETINGS);
 
-  const rituals = raw.rituals
+  const rituals = rituals0
     .filter((r) => (r.status === 'suggested' || r.status === 'accepted' || r.status === 'auto') && r.urls.length > 0)
     .slice(0, MAX_MEETINGS)
     .map((r) => ({
@@ -416,7 +423,7 @@ export function buildCoverageInput(raw: RawCoverageData): CoverageInput {
   }
 
   const spaceUrlsBySpace = new Map<number | undefined, SpaceUrl[]>();
-  for (const u of raw.spaceUrls) {
+  for (const u of allowedUrls(raw.spaceUrls, raw.blocklist)) {
     const list = spaceUrlsBySpace.get(u.spaceId) ?? [];
     list.push(u);
     spaceUrlsBySpace.set(u.spaceId, list);
