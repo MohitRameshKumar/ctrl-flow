@@ -26,6 +26,8 @@ export interface CadenceEvent {
   programmatic?: boolean;
   /** Written by the debug page's "Simulate" action only; wiped by its one-click cleanup. */
   synthetic?: boolean;
+  /** `navigated` from history.pushState / replaceState (in-page navigation), not a document load. */
+  spa?: boolean;
 }
 
 /** Messages sent from the content script to the background worker. Never carries field/keystroke values. */
@@ -44,7 +46,10 @@ export type ContentMessage =
   | { type: 'sensitive_focus'; value: boolean }
   /** Leader-key overlay (or the panel fallback) asking the background to run a letter / a search result. */
   | { type: 'leader_run'; letter: string }
-  | { type: 'leader_run_item'; kind: 'space' | 'ritual'; id: number };
+  | { type: 'leader_run_item'; kind: 'space' | 'ritual' | 'macro'; id: number }
+  /** Overlay answering the "Repeat N steps?" preview. */
+  | { type: 'leader_repeat_confirm' }
+  | { type: 'leader_repeat_cancel' };
 
 /** A learned (writing tab, reference tab) pair for Focus Flip. Counts and durations only. */
 export interface FlipPair {
@@ -234,6 +239,8 @@ export type MacroDetector = 'time_of_day' | 'sequence' | 'both';
 export interface ObservedAction {
   ts: number;
   kind: ObservedActionKind;
+  /** In-page (history API) navigation; Leader R ignores these unless the user clicked just before. */
+  spa?: boolean;
   /** Opaque target identity: a normalized URL today; an app/window id for desktop later. */
   target: string;
   title?: string;
@@ -430,6 +437,8 @@ export interface Macro {
   /** Optional for the same reason; read through `withMacroDefaults` to get a filled-in value. */
   stats?: MacroStats;
   trigger?: MacroTrigger;
+  /** Cadence-side: if a page is already open, switch to it instead of opening a new tab. Default (unset) opens a new tab. */
+  reuseOpenTabs?: boolean;
   lastRunAt?: number;
   lastRunResult?: MacroRunResult;
   createdAt: number;

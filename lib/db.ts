@@ -282,6 +282,10 @@ export async function updateMacroStatus(id: number, status: Macro['status']): Pr
   await db.macros.update(id, { status, updatedAt: Date.now() });
 }
 
+export async function setMacroReuseOpenTabs(id: number, reuseOpenTabs: boolean): Promise<void> {
+  await db.macros.update(id, { reuseOpenTabs, updatedAt: Date.now() });
+}
+
 export async function renameMacro(id: number, name: string): Promise<void> {
   await db.macros.update(id, { name, nameIsUserSet: true, updatedAt: Date.now() });
 }

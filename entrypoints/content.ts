@@ -1,3 +1,4 @@
+import { createContentGuard } from '@/lib/content-guard';
 import { isSensitiveField } from '@/lib/privacy';
 import type { ContentMessage } from '@/lib/types';
 
@@ -26,10 +27,18 @@ function leaderOverlayOpen(): boolean {
   return (globalThis as unknown as Record<string, boolean | undefined>).__cadenceLeaderOpen === true;
 }
 
+/** One per injected script instance; quiets and unregisters everything once the extension is reloaded. */
+const guard = createContentGuard();
+
 function send(message: ContentMessage): void {
-  chrome.runtime.sendMessage(message).catch(() => {
-    // Background worker may be asleep/unreachable momentarily; the event is dropped rather than retried.
-  });
+  if (!guard.alive()) return; // extension reloaded under us: stop silently
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {
+      // Background worker may be asleep/unreachable momentarily; the event is dropped rather than retried.
+    });
+  } catch {
+    guard.teardown(); // "Extension context invalidated" is thrown synchronously
+  }
 }
 
 /**
@@ -184,6 +193,10 @@ function createTypingTracker() {
     timer = setTimeout(flush, 5000);
   }
 
+  guard.onTeardown(() => {
+    if (timer) clearTimeout(timer);
+  });
+
   return { onKeydown, flush };
 }
 
@@ -199,14 +212,24 @@ function createFocusFlipPulses() {
   const lastSent: Record<string, number> = {};
   const trailing: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
 
-  chrome.storage.local
-    .get('focusFlipEnabled')
-    .then((r) => {
-      enabled = r.focusFlipEnabled === true;
-    })
-    .catch(() => undefined);
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.focusFlipEnabled) enabled = changes.focusFlipEnabled.newValue === true;
+  try {
+    chrome.storage.local
+      .get('focusFlipEnabled')
+      .then((r) => {
+        enabled = r.focusFlipEnabled === true;
+      })
+      .catch(() => undefined);
+    const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (!guard.alive()) return;
+      if (area === 'local' && changes.focusFlipEnabled) enabled = changes.focusFlipEnabled.newValue === true;
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    guard.onTeardown(() => chrome.storage.onChanged.removeListener(onStorage));
+  } catch {
+    guard.teardown();
+  }
+  guard.onTeardown(() => {
+    for (const t of Object.values(trailing)) if (t) clearTimeout(t);
   });
 
   function pulse(what: 'key' | 'scroll' | 'click'): void {
@@ -263,21 +286,21 @@ export default defineContentScript({
   main() {
     const { onKeydown, flush } = createTypingTracker();
     const flip = createFocusFlipPulses();
-    document.addEventListener('click', onClick, { capture: true });
-    document.addEventListener('click', flip.onClick, { capture: true });
-    document.addEventListener('scroll', flip.onScroll, { capture: true, passive: true });
-    document.addEventListener('focusin', flip.onFocusChange, { capture: true });
-    document.addEventListener('focusout', flip.onFocusChange, { capture: true });
-    window.addEventListener('keydown', flip.onKeydown, { capture: true });
-    document.addEventListener('change', onFieldChange, { capture: true });
+    guard.listen(document, 'click', onClick, { capture: true });
+    guard.listen(document, 'click', flip.onClick, { capture: true });
+    guard.listen(document, 'scroll', flip.onScroll, { capture: true, passive: true });
+    guard.listen(document, 'focusin', flip.onFocusChange, { capture: true });
+    guard.listen(document, 'focusout', flip.onFocusChange, { capture: true });
+    guard.listen(window, 'keydown', flip.onKeydown, { capture: true });
+    guard.listen(document, 'change', onFieldChange, { capture: true });
     // Rich editors (Google Docs, custom contenteditable widgets) commonly call
     // stopImmediatePropagation() on keydown at the document level or below to own
     // their own keyboard handling. A capture-phase listener on `window` always runs
     // before `document`'s, regardless of registration order, so it sees the key
     // before any such handler can swallow it.
-    window.addEventListener('keydown', onKeydown, { capture: true });
+    guard.listen(window, 'keydown', onKeydown, { capture: true });
     // The 5s debounce timer dies with the frame, so a burst still in progress when the user
     // navigates or closes the tab was silently lost. pagehide is the last reliable hook.
-    window.addEventListener('pagehide', flush);
+    guard.listen(window, 'pagehide', flush);
   },
 });

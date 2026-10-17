@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getEvents } from '@/lib/db';
-import { FocusFlipSection } from './components/FocusFlipSection';
-import { LeaderKeysSection } from './components/LeaderKeysSection';
-import { PrivacySettings } from './components/PrivacySettings';
+import { LEADER_PANEL_KEY } from '@/lib/leader';
 import { consumeMacroPaletteRequest } from '@/lib/macros';
 import { setAutoRunEnabled, setRunMode, setRunSpeed } from '@/lib/settings';
 import type { RunMode, RunSpeed } from '@/lib/types';
@@ -10,7 +8,7 @@ import { MacroOfferBanner } from './components/MacroOfferBanner';
 import { MacrosTab } from './components/MacrosTab';
 import { Header } from './components/Header';
 import { RitualsTab } from './components/RitualsTab';
-import { SettingsPanel } from './components/SettingsPanel';
+import { SettingsTab } from './components/SettingsTab';
 import { SpacesTab } from './components/SpacesTab';
 import { StandupTab } from './components/StandupTab';
 import { Tabs, type TabName } from './components/Tabs';
@@ -76,10 +74,17 @@ export default function App() {
     setPaletteNonce((n) => n + 1);
   }, []);
 
+  /** The leader key opened the panel because the page can't host the overlay: show the letter list (Settings). */
+  const consumeLeaderFallback = useCallback(async () => {
+    const { [LEADER_PANEL_KEY]: at } = await chrome.storage.session.get<Record<string, number | undefined>>(LEADER_PANEL_KEY);
+    if (typeof at === 'number' && Date.now() - at < 10_000) setTab('Settings');
+  }, []);
+
   useEffect(() => {
     refreshSettings();
     refreshCount();
     consumePaletteRequest();
+    consumeLeaderFallback();
     const interval = setInterval(refreshCount, 5000);
     const onStorageChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
@@ -87,6 +92,7 @@ export default function App() {
     ) => {
       if (area === 'session') {
         if (changes.macroPaletteRequest?.newValue) consumePaletteRequest();
+        if (changes[LEADER_PANEL_KEY]?.newValue) consumeLeaderFallback();
         return;
       }
       refreshSettings();
@@ -96,7 +102,7 @@ export default function App() {
       clearInterval(interval);
       chrome.storage.onChanged.removeListener(onStorageChanged);
     };
-  }, [refreshSettings, refreshCount, consumePaletteRequest]);
+  }, [refreshSettings, refreshCount, consumePaletteRequest, consumeLeaderFallback]);
 
   const togglePause = () => {
     chrome.storage.local.set({ paused: !paused });
@@ -115,27 +121,23 @@ export default function App() {
         {tab === 'Spaces' && <SpacesTab />}
         {tab === 'Macros' && <MacrosTab paletteNonce={paletteNonce} />}
         {tab === 'Standup' && <StandupTab />}
+        {tab === 'Settings' && (
+          <SettingsTab
+            calendarSource={calendarSource}
+            demoMode={demoMode}
+            runMode={runMode}
+            runSpeed={runSpeed}
+            autoRun={autoRun}
+            fallbackNotice={fallbackNotice}
+            onChangeCalendarSource={(source) => chrome.storage.local.set({ calendarSource: source })}
+            onToggleDemoMode={() => chrome.storage.local.set({ demoMode: !demoMode })}
+            onChangeRunMode={(mode) => void setRunMode(mode)}
+            onChangeRunSpeed={(speed) => void setRunSpeed(speed)}
+            onToggleAutoRun={() => void setAutoRunEnabled(!autoRun)}
+          />
+        )}
       </main>
 
-      <FocusFlipSection />
-
-      <LeaderKeysSection />
-
-      <PrivacySettings />
-
-      <SettingsPanel
-        calendarSource={calendarSource}
-        demoMode={demoMode}
-        runMode={runMode}
-        runSpeed={runSpeed}
-        autoRun={autoRun}
-        fallbackNotice={fallbackNotice}
-        onChangeCalendarSource={(source) => chrome.storage.local.set({ calendarSource: source })}
-        onToggleDemoMode={() => chrome.storage.local.set({ demoMode: !demoMode })}
-        onChangeRunMode={(mode) => void setRunMode(mode)}
-        onChangeRunSpeed={(speed) => void setRunSpeed(speed)}
-        onToggleAutoRun={() => void setAutoRunEnabled(!autoRun)}
-      />
     </div>
   );
 }

@@ -57,7 +57,7 @@ export function SpaceLetterControl({ spaceId, name, kind = 'space' }: { spaceId:
             onChange={(e) => setDraft(e.target.value)}
           />
           <button className="btn" disabled={!draft && !suggestion} onClick={() => assign(draft || suggestion || '')}>
-            Assign{!draft && suggestion ? ` ${suggestion.toUpperCase()}` : ''}
+            {kind === 'macro' ? 'Set letter' : 'Assign'}{!draft && suggestion ? ` ${suggestion.toUpperCase()}` : ''}
           </button>
         </>
       )}

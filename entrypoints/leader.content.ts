@@ -1,7 +1,8 @@
 // Leader-key overlay (HOT-3). Lives in a closed-off shadow DOM so no page style leaks in or out,
 // closes after 2 s or on Esc, and never lets its own keystrokes reach the collector: while open it
 // sets a flag the main content script checks, and it swallows keys before the page sees them.
-import type { LeaderShowMessage, MenuItem, SearchItem } from '@/lib/hotkeys';
+import { createContentGuard } from '@/lib/content-guard';
+import type { LeaderRepeatPreviewMessage, LeaderShowMessage, MenuItem, SearchItem } from '@/lib/hotkeys';
 import type { ContentMessage } from '@/lib/types';
 
 const HOST_ID = 'cadence-leader-host';
@@ -27,8 +28,15 @@ function setFlag(open: boolean): void {
   (globalThis as unknown as Record<string, boolean>)[OPEN_FLAG] = open;
 }
 
+const guard = createContentGuard();
+
 function send(message: ContentMessage): void {
-  chrome.runtime.sendMessage(message).catch(() => undefined);
+  if (!guard.alive()) return;
+  try {
+    chrome.runtime.sendMessage(message).catch(() => undefined);
+  } catch {
+    guard.teardown(); // "Extension context invalidated" is thrown synchronously
+  }
 }
 
 function escapeText(s: string): string {
@@ -46,6 +54,7 @@ export default defineContentScript({
     function close(): void {
       if (timer) clearTimeout(timer);
       timer = undefined;
+      previewMode = false;
       window.removeEventListener('keydown', onKey, true);
       host?.remove();
       host = null;
@@ -58,6 +67,8 @@ export default defineContentScript({
     }
 
     let items: MenuItem[] = [];
+    /** R's "Repeat N steps?" preview is showing: Enter runs it, Esc cancels it. */
+    let previewMode = false;
     let searchItems: SearchItem[] = [];
     let searchMode = false;
     let selected = 0;
@@ -87,7 +98,7 @@ export default defineContentScript({
       const list = matches();
       selected = Math.min(selected, Math.max(0, list.length - 1));
       box.innerHTML =
-        `<div class="title">Search spaces &amp; rituals</div><input id="q" placeholder="Type to filter…" value="${escapeText(query)}" />` +
+        `<div class="title">Search spaces, rituals &amp; macros</div><input id="q" placeholder="Type to filter…" value="${escapeText(query)}" />` +
         (list.length === 0
           ? `<div class="row soon">No matches</div>`
           : list
@@ -110,6 +121,21 @@ export default defineContentScript({
     function onKey(e: KeyboardEvent): void {
       // Letters here can run macros: a page script must not be able to press them for the user.
       if (!e.isTrusted) return;
+      if (previewMode) {
+        if (e.key === 'Enter') {
+          swallow(e);
+          send({ type: 'leader_repeat_confirm' });
+          close();
+        } else if (e.key === 'Escape') {
+          swallow(e);
+          send({ type: 'leader_repeat_cancel' });
+          close();
+        } else {
+          swallow(e); // nothing else is a command while a preview is waiting
+        }
+        return;
+      }
+
       if (e.key === 'Escape') {
         swallow(e);
         close();
@@ -144,8 +170,43 @@ export default defineContentScript({
         renderSearch();
         return;
       }
+      if (item.id === 'open_panel') {
+        // chrome.sidePanel.open() needs a user gesture, which a key press relayed through the
+        // background does not carry. The toolbar icon is set to open the panel on click, so point there.
+        showNotice('Click the Cadence icon in the toolbar to open the panel.');
+        return;
+      }
       send({ type: 'leader_run', letter: item.letter });
+      if (item.id === 'macro-repeat') {
+        // The background answers with a preview; keep the overlay up for it instead of closing.
+        showNotice('Working out what to repeat…');
+        timer = setTimeout(close, 6000);
+        return;
+      }
       close();
+    }
+
+    function showPreview(message: LeaderRepeatPreviewMessage): void {
+      if (!box) return;
+      box.innerHTML = `<div class="title">Cadence · repeat</div><div class="row">${escapeText(message.text)}</div>`;
+      if (timer) clearTimeout(timer);
+      if (message.runnable) {
+        previewMode = true;
+        // Left waiting long enough to read, then cancelled rather than run.
+        timer = setTimeout(() => {
+          send({ type: 'leader_repeat_cancel' });
+          close();
+        }, 20000);
+      } else {
+        timer = setTimeout(close, 3500);
+      }
+    }
+
+    function showNotice(text: string): void {
+      if (!box) return;
+      box.innerHTML = `<div class="title">Cadence</div><div class="row">${escapeText(text)}</div>`;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(close, 3500);
     }
 
     function show(message: LeaderShowMessage): void {
@@ -153,6 +214,7 @@ export default defineContentScript({
       items = message.items;
       searchItems = message.search;
       searchMode = false;
+      previewMode = false;
       query = '';
       selected = 0;
 
@@ -172,8 +234,20 @@ export default defineContentScript({
       timer = setTimeout(close, CLOSE_AFTER_MS);
     }
 
-    chrome.runtime.onMessage.addListener((message: unknown) => {
-      if ((message as LeaderShowMessage | undefined)?.type === 'leader_show') show(message as LeaderShowMessage);
-    });
+    try {
+      const onMessage = (message: unknown) => {
+        if (!guard.alive()) return;
+        const type = (message as { type?: string } | undefined)?.type;
+        if (type === 'leader_show') show(message as LeaderShowMessage);
+        else if (type === 'leader_repeat_preview') showPreview(message as LeaderRepeatPreviewMessage);
+      };
+      chrome.runtime.onMessage.addListener(onMessage);
+      guard.onTeardown(() => {
+        chrome.runtime.onMessage.removeListener(onMessage);
+        close();
+      });
+    } catch {
+      guard.teardown();
+    }
   },
 });

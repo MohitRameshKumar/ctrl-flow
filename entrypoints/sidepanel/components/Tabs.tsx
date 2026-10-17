@@ -1,4 +1,4 @@
-export const TAB_NAMES = ['Rituals', 'Spaces', 'Macros', 'Standup'] as const;
+export const TAB_NAMES = ['Rituals', 'Spaces', 'Macros', 'Standup', 'Settings'] as const;
 export type TabName = (typeof TAB_NAMES)[number];
 
 export interface TabsProps {

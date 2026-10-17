@@ -4,6 +4,7 @@ import {
   deleteMacro,
   getMacros,
   moveMacroStep,
+  setMacroReuseOpenTabs,
   removeMacroStep,
   renameMacro,
   setMacroStepEnabled,
@@ -277,6 +278,21 @@ function MacroCard({
       <div className="macro-run-status">{explainStatus(macro.status, macro.stats ?? EMPTY_STATS)}</div>
 
       <SpaceLetterControl kind="macro" spaceId={macroId} name={macro.name} />
+
+      <label className="settings-row">
+        <span>If a page is already open</span>
+        <select
+          value={macro.reuseOpenTabs ? 'switch' : 'new'}
+          aria-label="If a page is already open"
+          onChange={async (e) => {
+            await setMacroReuseOpenTabs(macroId, e.target.value === 'switch');
+            onRefresh();
+          }}
+        >
+          <option value="new">Open new tab</option>
+          <option value="switch">Switch to it</option>
+        </select>
+      </label>
 
       <ul className="tab-list">
         {macro.steps.map((step, index) => (

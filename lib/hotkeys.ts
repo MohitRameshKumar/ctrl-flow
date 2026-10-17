@@ -165,7 +165,7 @@ export function findMenuItem(menu: MenuItem[], pressed: string): MenuItem | unde
 // ---- background <-> overlay messages -------------------------------------------------------------
 
 export interface SearchItem {
-  kind: 'space' | 'ritual';
+  kind: 'space' | 'ritual' | 'macro';
   id: number;
   label: string;
 }
@@ -174,4 +174,30 @@ export interface LeaderShowMessage {
   type: 'leader_show';
   items: MenuItem[];
   search: SearchItem[];
+}
+
+/**
+ * Can the leader overlay (a content script) run on this page? Content scripts only match http(s),
+ * and Chrome blocks them on the Web Store. Decided from the URL alone so the caller can open the
+ * side panel *synchronously* inside the shortcut's user gesture when the answer is no.
+ */
+export function canHostOverlay(url: string | undefined): boolean {
+  if (!url) return false;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.hostname === 'chromewebstore.google.com') return false;
+  if (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) return false;
+  return true;
+}
+
+/** Background -> overlay: what R would repeat. `runnable: false` is an informational message (nothing to repeat). */
+export interface LeaderRepeatPreviewMessage {
+  type: 'leader_repeat_preview';
+  text: string;
+  runnable: boolean;
 }

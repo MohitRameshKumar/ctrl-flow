@@ -43,7 +43,8 @@ import {
   handleUserActivation,
   resumeFlipIfDue,
 } from '@/lib/focus-flip';
-import { openLeader, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
+import { cancelRepeat, confirmRepeat } from '@/lib/macro-leaders';
+import { handleLeaderCommand, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
 import type { BlocklistConfig, CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
@@ -71,6 +72,7 @@ interface WriteEventInput {
   fieldName?: string;
   keyCount?: number;
   programmatic?: boolean;
+  spa?: boolean;
 }
 
 /**
@@ -187,6 +189,7 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     fieldName: input.fieldName,
     keyCount: input.keyCount,
     programmatic: input.programmatic ? true : undefined,
+    spa: input.spa ? true : undefined,
   };
 
   await db.events.add(event);
@@ -230,14 +233,14 @@ function scheduleInProgressCheck(): void {
 }
 
 /** Shared by the committed-navigation and SPA-navigation listeners. */
-function recordNavigation(tabId: number, url: string): void {
+function recordNavigation(tabId: number, url: string, spa = false): void {
   chrome.tabs
     .get(tabId)
     .then((tab) => {
       rememberTabUrl(tabId, url, tab.title);
-      return writeEvent({ kind: 'navigated', tabId, windowId: tab.windowId, rawUrl: url, title: tab.title });
+      return writeEvent({ kind: 'navigated', tabId, windowId: tab.windowId, rawUrl: url, title: tab.title, spa });
     })
-    .catch(() => writeEvent({ kind: 'navigated', tabId, rawUrl: url }))
+    .catch(() => writeEvent({ kind: 'navigated', tabId, rawUrl: url, spa }))
     .then(scheduleInProgressCheck)
     .catch((err) => console.error('[cadence] navigated failed', err));
 }
@@ -363,6 +366,12 @@ async function handleContentMessage(
     case 'leader_run_item':
       await runSearchItem(message.kind, message.id);
       return;
+    case 'leader_repeat_confirm':
+      await confirmRepeat();
+      return;
+    case 'leader_repeat_cancel':
+      await cancelRepeat();
+      return;
   }
 }
 
@@ -455,7 +464,7 @@ export default defineBackground(() => {
   // One listener for both commands: the leader key and the macro palette.
   chrome.commands.onCommand.addListener((command, tab) => {
     if (command === 'leader-key') {
-      openLeader(tab).catch((err) => console.error('[cadence] leader key failed', err));
+      handleLeaderCommand(tab); // synchronous up to sidePanel.open(): see lib/leader.ts
       return;
     }
     if (command !== MACRO_PALETTE_COMMAND) return;
@@ -560,7 +569,7 @@ export default defineBackground(() => {
   // repetitive work worth learning.
   chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     if (details.frameId !== 0) return;
-    recordNavigation(details.tabId, details.url);
+    recordNavigation(details.tabId, details.url, true); // in-page navigation: Leader R ignores it unless you clicked
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {

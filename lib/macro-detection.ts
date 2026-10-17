@@ -70,6 +70,7 @@ export function eventToAction(e: CadenceEvent): ObservedAction | null {
       title: e.title,
       contextId: e.tabId,
       deliberate: e.kind !== 'tab_activated',
+      ...(e.spa ? { spa: true } : {}),
     };
   }
 
