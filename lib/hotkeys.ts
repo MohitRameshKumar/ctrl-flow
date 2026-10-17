@@ -194,3 +194,10 @@ export function canHostOverlay(url: string | undefined): boolean {
   if (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) return false;
   return true;
 }
+
+/** Background -> overlay: what R would repeat. `runnable: false` is an informational message (nothing to repeat). */
+export interface LeaderRepeatPreviewMessage {
+  type: 'leader_repeat_preview';
+  text: string;
+  runnable: boolean;
+}

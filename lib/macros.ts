@@ -50,7 +50,7 @@ import { isReplayInProgress } from './macro-run-channel';
 import { normalizeUrl } from './normalize';
 import { chromeActionSource } from './macro-source';
 import { getAutoRunEnabled, getDemoMode, getRunMode, getRunSpeed } from './settings';
-import type { Macro, MacroCandidate, MacroRunResult, RunMode } from './types';
+import type { Macro, MacroCandidate, MacroRunResult, ObservedAction, RunMode } from './types';
 
 export const MACRO_RECOMPUTE_ALARM = 'cadence-macro-recompute';
 export const MACRO_NOTIFICATION_PREFIX = 'cadence-macro:';
@@ -106,15 +106,28 @@ export async function recomputeMacros(demoMode: boolean): Promise<void> {
  * candidate pipeline the detectors feed, so there is no second code path to keep correct.
  */
 export async function recordMacroFromRecentActivity(
-  /** Cadence-side addition for Leader M (mark start/end); omitted means the last 30 seconds. */
-  window?: { fromTs: number; toTs: number },
+  /**
+   * Cadence-side additions for Leader K / R / M; omitted means the last 30 seconds, unrefined.
+   * `refine` cleans the raw actions (redirect chains, tab switches) before the candidate is built;
+   * `reuseExisting` returns the stored macro for the same routine instead of adding a duplicate.
+   */
+  window?: {
+    fromTs: number;
+    toTs: number;
+    refine?: (actions: ObservedAction[]) => ObservedAction[];
+    reuseExisting?: boolean;
+  },
 ): Promise<Macro | null> {
   const now = Date.now();
-  const actions = await chromeActionSource.getActions(window?.fromTs ?? now - MACRO_RECORD_WINDOW_MS, window?.toTs ?? now);
-  const candidate = candidateFromSession(actions);
+  const raw = await chromeActionSource.getActions(window?.fromTs ?? now - MACRO_RECORD_WINDOW_MS, window?.toTs ?? now);
+  const candidate = candidateFromSession(window?.refine ? window.refine(raw) : raw);
   if (!candidate) return null;
 
   const existing = await getMacros();
+  if (window?.reuseExisting) {
+    const match = matchExistingMacro(existing, candidate);
+    if (match) return match;
+  }
   const taken = new Set(existing.map((m) => m.name));
   const name = nameMacro(candidate, existing.length, taken);
 

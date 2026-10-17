@@ -88,8 +88,8 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** a notification "Macro saved" with a name; it appears in the Macros tab. With nothing recent: "Nothing to keep".
 6. [ ] **Leader M** (mark start/end): leader → **M** ("Macro recording started"); do a routine; leader → **M** again.
    **Expected:** second press saves a macro from everything between the two marks. A forgotten first mark expires after 10 min.
-7. [ ] **Leader R** (repeat last action): open 2–3 sites, wait ~5 s, then leader → **R**.
-   **Expected:** notification "Repeating last action" with a name; that routine replays and is saved in the Macros tab. With no recent action (wait 10+ min) but a macro run earlier: "No recent action — repeating last macro". With neither: "Nothing to repeat yet". The overlay label reads *Repeat last action (else last macro)*.
+7. [ ] **Leader R** (repeat last action, with preview): open Wikipedia → a news site → GitHub in three new tabs, wait ~5 s, leader → **R**.
+   **Expected:** the overlay stays up and shows exactly "Repeat 3 steps: Wikipedia → <News> → GitHub. Enter to run, Esc to cancel." — no earlier browsing, no redirect hops, no steps for tabs you merely switched to. **Enter** replays exactly those 3; **Esc** cancels and runs nothing. Press leader → R again right after a replay: no new segment, so it offers "No recent action. Repeat last macro …" (never a doubled-up macro). With no macros and no recent action: "Nothing to repeat yet". More than 10 steps shows "→ +N more".
 8. [ ] On a saved macro, assign a leader letter (not R/K/M).
    **Expected:** leader overlay now lists *Macro: <name>* under that letter; pressing it runs the macro. Deleting/rejecting the macro drops the letter.
 9. [ ] **Leader S mid-replay:** start a macro with a *Wait* step (Add step → *Wait a moment*, 10 s) in Guided/Slow mode; press leader → **S**.

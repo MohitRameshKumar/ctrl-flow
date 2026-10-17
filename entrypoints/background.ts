@@ -43,6 +43,7 @@ import {
   handleUserActivation,
   resumeFlipIfDue,
 } from '@/lib/focus-flip';
+import { cancelRepeat, confirmRepeat } from '@/lib/macro-leaders';
 import { handleLeaderCommand, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
@@ -71,6 +72,7 @@ interface WriteEventInput {
   fieldName?: string;
   keyCount?: number;
   programmatic?: boolean;
+  spa?: boolean;
 }
 
 /**
@@ -187,6 +189,7 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     fieldName: input.fieldName,
     keyCount: input.keyCount,
     programmatic: input.programmatic ? true : undefined,
+    spa: input.spa ? true : undefined,
   };
 
   await db.events.add(event);
@@ -230,14 +233,14 @@ function scheduleInProgressCheck(): void {
 }
 
 /** Shared by the committed-navigation and SPA-navigation listeners. */
-function recordNavigation(tabId: number, url: string): void {
+function recordNavigation(tabId: number, url: string, spa = false): void {
   chrome.tabs
     .get(tabId)
     .then((tab) => {
       rememberTabUrl(tabId, url, tab.title);
-      return writeEvent({ kind: 'navigated', tabId, windowId: tab.windowId, rawUrl: url, title: tab.title });
+      return writeEvent({ kind: 'navigated', tabId, windowId: tab.windowId, rawUrl: url, title: tab.title, spa });
     })
-    .catch(() => writeEvent({ kind: 'navigated', tabId, rawUrl: url }))
+    .catch(() => writeEvent({ kind: 'navigated', tabId, rawUrl: url, spa }))
     .then(scheduleInProgressCheck)
     .catch((err) => console.error('[cadence] navigated failed', err));
 }
@@ -362,6 +365,12 @@ async function handleContentMessage(
       return;
     case 'leader_run_item':
       await runSearchItem(message.kind, message.id);
+      return;
+    case 'leader_repeat_confirm':
+      await confirmRepeat();
+      return;
+    case 'leader_repeat_cancel':
+      await cancelRepeat();
       return;
   }
 }
@@ -551,7 +560,7 @@ export default defineBackground(() => {
 
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
-    recordNavigation(details.tabId, details.url);
+    recordNavigation(details.tabId, details.url, true);
   });
 
   // Single-page apps change the URL without committing a navigation, so `onCommitted` alone sees

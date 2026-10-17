@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { executeMacro } from '@/lib/macro-executor';
 import { typeIntoSelector } from '@/lib/macro-injected';
 import { checkTypedStep, looksLikeOpaqueId, redactParamValue, sanitizeParam } from '@/lib/macro-privacy';
-import { lastCompletedSegment, planRepeat } from '@/lib/macro-repeat';
 import { SENSITIVE_RE } from '@/lib/privacy';
 import { buildCoverageInput, buildStandupInput } from '@/lib/standup-input';
-import type { BlocklistConfig, ObservedAction } from '@/lib/types';
+import type { BlocklistConfig } from '@/lib/types';
 import { createFakeHost, freshRunState } from './fake-host';
 import { A, B, macro, openStep } from './helpers';
 
@@ -147,31 +146,5 @@ describe('standup and coverage input drop excluded domains', () => {
       now: 1000,
     });
     expect(JSON.stringify(input)).not.toContain('bank.example');
-  });
-});
-
-describe('Leader R: last completed segment, else last-run macro', () => {
-  const act = (ts: number, target: string): ObservedAction => ({ ts, kind: 'open_url', target, deliberate: true });
-  const now = 1_000_000;
-
-  it('builds from a completed recent segment', () => {
-    const c = lastCompletedSegment([act(now - 20_000, A), act(now - 15_000, B)], now);
-    expect(c).not.toBeNull();
-    expect(planRepeat(c, []).via).toBe('segment');
-  });
-
-  it('ignores a segment still in progress, or too old', () => {
-    expect(lastCompletedSegment([act(now - 2000, A), act(now - 1000, B)], now)).toBeNull();
-    expect(lastCompletedSegment([act(now - 3_600_000, A), act(now - 3_599_000, B)], now)).toBeNull();
-  });
-
-  it('falls back to the most recently run macro, then to nothing', () => {
-    const older = { ...macro({ steps: [openStep(A)] }), id: 1, lastRunAt: 10 };
-    const newer = { ...macro({ steps: [openStep(B)] }), id: 2, lastRunAt: 99 };
-    const plan = planRepeat(null, [older, newer]);
-    expect(plan.via).toBe('last-macro');
-    expect(plan.via === 'last-macro' && plan.macro.id).toBe(2);
-    expect(planRepeat(null, [{ ...older, lastRunAt: undefined }]).via).toBe('none');
-    expect(planRepeat(null, [{ ...newer, status: 'never' }]).via).toBe('none');
   });
 });

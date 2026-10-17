@@ -1,39 +1,131 @@
 // Leader R, "repeat the last action": pure selection logic (no chrome.*, no Dexie) so it is unit-testable.
-// It only picks *what* to repeat; building and running go through the macro feature's own functions.
-import { candidateFromSession, isUsableSession, sessionize } from './macro-detection';
+// It decides *which window of activity* to repeat and how to describe it; building and running go
+// through the macro feature's own functions (`recordMacroFromRecentActivity`, `runMacro`), the same
+// ones Leader K uses, and both pass `refineSegment` so they cut the same segment the same way.
+import { candidateFromSession, domainOf, isUsableSession, prettyDomain, sessionize } from './macro-detection';
 import type { Macro, MacroCandidate, ObservedAction } from './types';
 
-/** Actions this far apart belong to different segments. Shorter than detection's 3 minutes: R means "what I just did". */
-export const SEGMENT_GAP_MS = 30 * 1000;
-/** A segment whose last action is newer than this may still be in progress, so it is not "completed". */
-export const SEGMENT_SETTLE_MS = 3 * 1000;
-/** How far back a segment may end and still count as recent. */
+/** Idle gap that ends a segment. Much shorter than detection's 3 minutes: R means "what I just did". */
+export const SEGMENT_GAP_MS = 20 * 1000;
+/** How far back a segment may start. */
 export const SEGMENT_MAX_AGE_MS = 10 * 60 * 1000;
+/** Same-tab loads this close together are one navigation chain (redirects), not separate pages. */
+export const REDIRECT_CHAIN_MS = 4 * 1000;
+/** An in-page (history API) navigation only counts if the user clicked in that tab this recently. */
+export const SPA_CLICK_WINDOW_MS = 5 * 1000;
+export const PREVIEW_MAX_STEPS = 10;
 
-/** The most recent completed, usable segment of actions as a macro candidate, or null. */
-export function lastCompletedSegment(actions: ObservedAction[], now: number): MacroCandidate | null {
-  const sessions = sessionize(actions, SEGMENT_GAP_MS).filter(isUsableSession);
-  for (let i = sessions.length - 1; i >= 0; i--) {
-    const session = sessions[i]!;
-    const end = session[session.length - 1]!.ts;
-    if (now - end < SEGMENT_SETTLE_MS) continue; // still happening
-    if (now - end > SEGMENT_MAX_AGE_MS) return null; // nothing recent enough
-    const candidate = candidateFromSession(session);
-    if (candidate) return candidate;
+/**
+ * Turns the raw action log into what the user deliberately did:
+ *  - drops activations of tabs that were already open (they are not "opening" anything),
+ *  - drops in-page navigations unless a click in the same tab just preceded them,
+ *  - collapses each tab's redirect / navigation chain to its final URL.
+ * Programmatic and synthetic events never get here: `eventToAction` already returns null for them.
+ */
+export function refineSegment(actions: ObservedAction[]): ObservedAction[] {
+  const sorted = [...actions].sort((a, b) => a.ts - b.ts);
+
+  const kept: ObservedAction[] = [];
+  for (const a of sorted) {
+    if (a.kind === 'open_url') {
+      if (!a.deliberate) continue; // tab_activated: switching back to an existing tab
+      if (a.spa) {
+        const clicked = sorted.some(
+          (c) => c.kind === 'click' && c.contextId === a.contextId && c.ts <= a.ts && a.ts - c.ts <= SPA_CLICK_WINDOW_MS,
+        );
+        if (!clicked) continue;
+      }
+    }
+    kept.push(a);
   }
-  return null;
+
+  const out: ObservedAction[] = [];
+  const lastOpenIndexByContext = new Map<number, number>();
+  for (const a of kept) {
+    if (a.kind !== 'open_url' || a.contextId === undefined) {
+      out.push(a);
+      continue;
+    }
+    const prevIndex = lastOpenIndexByContext.get(a.contextId);
+    const prev = prevIndex === undefined ? undefined : out[prevIndex];
+    // A click-driven in-page navigation is something the user did, not a redirect: it stays its own step.
+    if (prev && !a.spa && a.ts - prev.ts <= REDIRECT_CHAIN_MS) {
+      out[prevIndex!] = a; // same chain: the later URL is where the tab ended up
+      continue;
+    }
+    lastOpenIndexByContext.set(a.contextId, out.length);
+    out.push(a);
+  }
+  return out;
+}
+
+export interface RepeatBoundaries {
+  /** Latest end of any macro replay. */
+  lastRunEnd?: number;
+  /** Latest K / R / M-end: the log before this has already been consumed. */
+  lastConsumed?: number;
+  /** A pending M mark: the segment starts there. */
+  markStart?: number;
+}
+
+/** Segment start = the most recent of: the age limit, a replay end, a previous K/R/M, or an M mark. */
+export function segmentStart(now: number, b: RepeatBoundaries): number {
+  return Math.max(now - SEGMENT_MAX_AGE_MS, b.lastRunEnd ?? 0, b.lastConsumed ?? 0, b.markStart ?? 0);
+}
+
+export interface RepeatSegment {
+  window: { fromTs: number; toTs: number };
+  candidate: MacroCandidate;
+}
+
+/** The latest idle-gap-bounded segment after `since`, if it is a usable routine. Never an older one. */
+export function lastSegment(actions: ObservedAction[], since: number, now: number): RepeatSegment | null {
+  const recent = refineSegment(actions.filter((a) => a.ts > since && a.ts <= now));
+  const sessions = sessionize(recent, SEGMENT_GAP_MS);
+  const last = sessions[sessions.length - 1];
+  if (!last || !isUsableSession(last)) return null;
+  const candidate = candidateFromSession(last);
+  if (!candidate) return null;
+  return { window: { fromTs: last[0]!.ts, toTs: last[last.length - 1]!.ts + 1 }, candidate };
 }
 
 export type RepeatPlan =
-  | { via: 'segment'; candidate: MacroCandidate }
+  | { via: 'segment'; segment: RepeatSegment }
   | { via: 'last-macro'; macro: Macro }
   | { via: 'none' };
 
 /** Recent action first; otherwise the last-run macro; otherwise nothing. */
-export function planRepeat(candidate: MacroCandidate | null, macros: Macro[]): RepeatPlan {
-  if (candidate) return { via: 'segment', candidate };
+export function planRepeat(segment: RepeatSegment | null, macros: Macro[]): RepeatPlan {
+  if (segment) return { via: 'segment', segment };
   const last = macros
     .filter((m) => m.id !== undefined && m.status !== 'never' && m.lastRunAt !== undefined)
     .sort((a, b) => (b.lastRunAt ?? 0) - (a.lastRunAt ?? 0))[0];
   return last ? { via: 'last-macro', macro: last } : { via: 'none' };
+}
+
+/** "Wikipedia → NYT → GitHub", capped, with "+N more". Only enabled open steps (clicks are opt-in). */
+export function describeSteps(urls: string[]): { count: number; text: string } {
+  const names = urls.map((u) => prettyDomain(domainOf(u) ?? u));
+  const shown = names.slice(0, PREVIEW_MAX_STEPS).join(' → ');
+  const extra = names.length - PREVIEW_MAX_STEPS;
+  return { count: names.length, text: extra > 0 ? `${shown} → +${extra} more` : shown };
+}
+
+export function previewText(plan: RepeatPlan): { runnable: boolean; text: string } {
+  if (plan.via === 'none') {
+    return { runnable: false, text: 'Nothing to repeat yet. Press K to keep what you do as a macro.' };
+  }
+  const urls =
+    plan.via === 'segment'
+      ? plan.segment.candidate.steps.filter((s) => s.kind === 'open_url' && s.enabled).map((s) => s.url)
+      : plan.macro.steps.filter((s) => s.kind === 'open_url' && s.enabled).map((s) => s.url);
+  const { count, text } = describeSteps(urls);
+  const steps = `${count} step${count === 1 ? '' : 's'}`;
+  return {
+    runnable: true,
+    text:
+      plan.via === 'segment'
+        ? `Repeat ${steps}: ${text}. Enter to run, Esc to cancel.`
+        : `No recent action. Repeat last macro "${plan.macro.name}" (${steps}: ${text})? Enter to run, Esc to cancel.`,
+  };
 }

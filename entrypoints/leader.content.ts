@@ -2,7 +2,7 @@
 // closes after 2 s or on Esc, and never lets its own keystrokes reach the collector: while open it
 // sets a flag the main content script checks, and it swallows keys before the page sees them.
 import { createContentGuard } from '@/lib/content-guard';
-import type { LeaderShowMessage, MenuItem, SearchItem } from '@/lib/hotkeys';
+import type { LeaderRepeatPreviewMessage, LeaderShowMessage, MenuItem, SearchItem } from '@/lib/hotkeys';
 import type { ContentMessage } from '@/lib/types';
 
 const HOST_ID = 'cadence-leader-host';
@@ -54,6 +54,7 @@ export default defineContentScript({
     function close(): void {
       if (timer) clearTimeout(timer);
       timer = undefined;
+      previewMode = false;
       window.removeEventListener('keydown', onKey, true);
       host?.remove();
       host = null;
@@ -66,6 +67,8 @@ export default defineContentScript({
     }
 
     let items: MenuItem[] = [];
+    /** R's "Repeat N steps?" preview is showing: Enter runs it, Esc cancels it. */
+    let previewMode = false;
     let searchItems: SearchItem[] = [];
     let searchMode = false;
     let selected = 0;
@@ -118,6 +121,21 @@ export default defineContentScript({
     function onKey(e: KeyboardEvent): void {
       // Letters here can run macros: a page script must not be able to press them for the user.
       if (!e.isTrusted) return;
+      if (previewMode) {
+        if (e.key === 'Enter') {
+          swallow(e);
+          send({ type: 'leader_repeat_confirm' });
+          close();
+        } else if (e.key === 'Escape') {
+          swallow(e);
+          send({ type: 'leader_repeat_cancel' });
+          close();
+        } else {
+          swallow(e); // nothing else is a command while a preview is waiting
+        }
+        return;
+      }
+
       if (e.key === 'Escape') {
         swallow(e);
         close();
@@ -159,7 +177,29 @@ export default defineContentScript({
         return;
       }
       send({ type: 'leader_run', letter: item.letter });
+      if (item.id === 'macro-repeat') {
+        // The background answers with a preview; keep the overlay up for it instead of closing.
+        showNotice('Working out what to repeat…');
+        timer = setTimeout(close, 6000);
+        return;
+      }
       close();
+    }
+
+    function showPreview(message: LeaderRepeatPreviewMessage): void {
+      if (!box) return;
+      box.innerHTML = `<div class="title">Cadence · repeat</div><div class="row">${escapeText(message.text)}</div>`;
+      if (timer) clearTimeout(timer);
+      if (message.runnable) {
+        previewMode = true;
+        // Left waiting long enough to read, then cancelled rather than run.
+        timer = setTimeout(() => {
+          send({ type: 'leader_repeat_cancel' });
+          close();
+        }, 20000);
+      } else {
+        timer = setTimeout(close, 3500);
+      }
     }
 
     function showNotice(text: string): void {
@@ -174,6 +214,7 @@ export default defineContentScript({
       items = message.items;
       searchItems = message.search;
       searchMode = false;
+      previewMode = false;
       query = '';
       selected = 0;
 
@@ -196,7 +237,9 @@ export default defineContentScript({
     try {
       const onMessage = (message: unknown) => {
         if (!guard.alive()) return;
-        if ((message as LeaderShowMessage | undefined)?.type === 'leader_show') show(message as LeaderShowMessage);
+        const type = (message as { type?: string } | undefined)?.type;
+        if (type === 'leader_show') show(message as LeaderShowMessage);
+        else if (type === 'leader_repeat_preview') showPreview(message as LeaderRepeatPreviewMessage);
       };
       chrome.runtime.onMessage.addListener(onMessage);
       guard.onTeardown(() => {
