@@ -1,9 +1,12 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { CadenceEvent, EventKind, Ritual } from './types';
+import type { CadenceEvent, EventKind, Ritual, Shelf, Space, SpaceUrl } from './types';
 
 const db = new Dexie('cadence') as Dexie & {
   events: EntityTable<CadenceEvent, 'id'>;
   rituals: EntityTable<Ritual, 'id'>;
+  spaces: EntityTable<Space, 'id'>;
+  spaceUrls: EntityTable<SpaceUrl, 'id'>;
+  shelves: EntityTable<Shelf, 'id'>;
 };
 
 db.version(1).stores({
@@ -13,6 +16,13 @@ db.version(1).stores({
 // v2 only adds the `rituals` table; `events` carries forward unchanged.
 db.version(2).stores({
   rituals: '++id, seriesKey, status, updatedAt',
+});
+
+// v3 only adds spaces/spaceUrls/shelves; `events` and `rituals` carry forward unchanged.
+db.version(3).stores({
+  spaces: '++id, name, status, createdAt, updatedAt',
+  spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
+  shelves: '++id, spaceId, createdAt',
 });
 
 export { db };
@@ -88,4 +98,61 @@ export async function removeRitualUrl(id: number, url: string): Promise<void> {
     removedUrls: ritual.removedUrls.includes(url) ? ritual.removedUrls : [...ritual.removedUrls, url],
     updatedAt: Date.now(),
   });
+}
+
+export function getSpaces(): Promise<Space[]> {
+  return db.spaces.toArray();
+}
+
+export function getSpaceById(id: number): Promise<Space | undefined> {
+  return db.spaces.get(id);
+}
+
+export function getSpaceUrls(): Promise<SpaceUrl[]> {
+  return db.spaceUrls.toArray();
+}
+
+export function getSpaceUrlsForSpace(spaceId: number): Promise<SpaceUrl[]> {
+  return db.spaceUrls.where('spaceId').equals(spaceId).toArray();
+}
+
+export function getSpaceUrlByUrl(url: string): Promise<SpaceUrl | undefined> {
+  return db.spaceUrls.where('url').equals(url).first();
+}
+
+export function createSpace(space: Omit<Space, 'id'>): Promise<number | undefined> {
+  return db.spaces.add(space);
+}
+
+export async function renameSpace(id: number, name: string): Promise<void> {
+  await db.spaces.update(id, { name, updatedAt: Date.now() });
+}
+
+export function addSpaceUrl(spaceUrl: Omit<SpaceUrl, 'id'>): Promise<number | undefined> {
+  return db.spaceUrls.add(spaceUrl);
+}
+
+export async function moveSpaceUrl(spaceUrlId: number, toSpaceId: number): Promise<void> {
+  await db.spaceUrls.update(spaceUrlId, { spaceId: toSpaceId, source: 'user' });
+}
+
+export async function setSpaceUrlAlwaysOpen(spaceUrlId: number, alwaysOpen: boolean): Promise<void> {
+  await db.spaceUrls.update(spaceUrlId, { alwaysOpen, source: 'user' });
+}
+
+export async function removeSpaceUrl(spaceUrlId: number): Promise<void> {
+  await db.spaceUrls.delete(spaceUrlId);
+}
+
+export function addShelf(shelf: Omit<Shelf, 'id'>): Promise<number | undefined> {
+  return db.shelves.add(shelf);
+}
+
+export async function getLatestShelfForSpace(spaceId: number): Promise<Shelf | undefined> {
+  const shelves = await db.shelves.where('spaceId').equals(spaceId).toArray();
+  return shelves.sort((a, b) => b.createdAt - a.createdAt)[0];
+}
+
+export async function deleteShelf(id: number): Promise<void> {
+  await db.shelves.delete(id);
 }

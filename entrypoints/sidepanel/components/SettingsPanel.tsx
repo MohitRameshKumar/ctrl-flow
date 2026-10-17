@@ -1,9 +1,37 @@
+import { useEffect, useState } from 'react';
+import { getLastAiRequest, type LastAiRequestRecord } from '@/lib/ai';
+
 export interface SettingsPanelProps {
   calendarSource: 'demo' | 'google';
   demoMode: boolean;
   fallbackNotice: string | null;
   onChangeCalendarSource: (source: 'demo' | 'google') => void;
   onToggleDemoMode: () => void;
+}
+
+function LastAiRequestViewer() {
+  const [record, setRecord] = useState<LastAiRequestRecord | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    getLastAiRequest().then(setRecord);
+    const onChanged = () => getLastAiRequest().then(setRecord);
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+
+  return (
+    <div className="last-ai-request">
+      <button className="btn btn-link" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide' : 'Show'} last AI request
+      </button>
+      {open && (
+        <pre className="ai-request-json">
+          {record ? JSON.stringify(record, null, 2) : 'No AI calls made yet.'}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 export function SettingsPanel({
@@ -36,6 +64,8 @@ export function SettingsPanel({
       </label>
 
       {fallbackNotice && <div className="notice">{fallbackNotice}</div>}
+
+      <LastAiRequestViewer />
 
       <button className="btn btn-link" onClick={openDebugPage}>
         Open debug page

@@ -3,6 +3,7 @@ import { getEvents } from '@/lib/db';
 import { Header } from './components/Header';
 import { RitualsTab } from './components/RitualsTab';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SpacesTab } from './components/SpacesTab';
 import { Tabs, type TabName } from './components/Tabs';
 
 function startOfToday(): number {
@@ -59,13 +60,9 @@ export default function App() {
       <Tabs active={tab} onChange={setTab} />
 
       <main className="content">
-        {tab === 'Rituals' ? (
-          <RitualsTab />
-        ) : (
-          <div className="coming-soon">
-            {tab} — coming soon
-          </div>
-        )}
+        {tab === 'Rituals' && <RitualsTab />}
+        {tab === 'Spaces' && <SpacesTab />}
+        {tab !== 'Rituals' && tab !== 'Spaces' && <div className="coming-soon">{tab} — coming soon</div>}
       </main>
 
       <SettingsPanel

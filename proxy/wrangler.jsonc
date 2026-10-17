@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cadence-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-17",
+  "vars": {
+    // The extension's chrome-extension:// origin. CORS only allows this exact origin.
+    // Compute it from the public key in wxt.config.ts (see scripts/gen-key.sh), e.g.
+    // "chrome-extension://likggcapbkekeffagciamplbcmcobfcd"
+    "ALLOWED_ORIGIN": "chrome-extension://REPLACE_WITH_EXTENSION_ID"
+  }
+}

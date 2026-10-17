@@ -69,3 +69,65 @@ export interface Ritual {
   status: RitualStatus;
   updatedAt: number;
 }
+
+/** 'auto_offline' is the domain-grouping fallback used when the AI call fails. */
+export type SpaceStatus = 'ai' | 'auto_offline' | 'user';
+
+export interface Space {
+  id?: number;
+  name: string;
+  status: SpaceStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type SpaceUrlSource = 'ai' | 'user';
+
+export interface SpaceUrl {
+  id?: number;
+  spaceId: number;
+  url: string;
+  title?: string;
+  source: SpaceUrlSource;
+  alwaysOpen: boolean;
+}
+
+export interface ShelvedUrl {
+  url: string;
+  title?: string;
+}
+
+export interface Shelf {
+  id?: number;
+  spaceId: number;
+  urls: ShelvedUrl[];
+  createdAt: number;
+}
+
+/** Only what's ever sent to the AI proxy: normalized URL, domain, and page title. */
+export interface AiUrlInput {
+  url: string;
+  title: string;
+}
+
+export type TaskName = 'name_spaces' | 'assign_tabs' | 'standup' | 'coverage_doc';
+
+export interface NameSpacesInput {
+  urls: AiUrlInput[];
+}
+export interface NameSpacesSpace {
+  name: string;
+  urls: string[];
+}
+export type NameSpacesOutput = NameSpacesSpace[];
+
+export interface AssignTabsInput {
+  urls: AiUrlInput[];
+  existingSpaces: string[];
+}
+export interface AssignTabsAssignment {
+  url: string;
+  spaceName: string | null;
+  newSpaceName: string | null;
+}
+export type AssignTabsOutput = AssignTabsAssignment[];

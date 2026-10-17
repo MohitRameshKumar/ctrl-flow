@@ -1,15 +1,16 @@
 import { createCalendarSource } from '@/lib/calendar';
 import { db } from '@/lib/db';
 import { normalizeUrl } from '@/lib/normalize';
+import { routeNotificationButtonClicked } from '@/lib/notifications';
 import { DEFAULT_BLOCKLIST, getBlocklist, isBlocklisted, isPaused, isSensitiveField } from '@/lib/privacy';
 import {
   RITUAL_RECOMPUTE_ALARM,
   RITUAL_TRIGGER_ALARM_PREFIX,
   detectRituals,
   fireRitualTrigger,
-  handleRitualNotificationButtonClicked,
   scheduleRitualAlarms,
 } from '@/lib/rituals';
+import { SPACE_RECOMPUTE_ALARM, SWITCH_CHECK_ALARM, checkAndOfferSwitch, recomputeSpaces } from '@/lib/spaces';
 import type { CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
 
 const CLEANUP_ALARM = 'cadence-cleanup';
@@ -73,6 +74,11 @@ async function initDefaults(): Promise<void> {
   }
 }
 
+async function getDemoMode(): Promise<boolean> {
+  const { demoMode = true } = await chrome.storage.local.get<{ demoMode?: boolean }>('demoMode');
+  return demoMode;
+}
+
 async function runRitualRecompute(): Promise<void> {
   const { calendarSource = 'demo', demoMode = true } = await chrome.storage.local.get<{
     calendarSource?: 'demo' | 'google';
@@ -134,7 +140,10 @@ export default defineBackground(() => {
     initDefaults().catch((err) => console.error('[cadence] initDefaults failed', err));
     chrome.alarms.create(CLEANUP_ALARM, { periodInMinutes: 24 * 60 });
     chrome.alarms.create(RITUAL_RECOMPUTE_ALARM, { periodInMinutes: 15 });
+    chrome.alarms.create(SPACE_RECOMPUTE_ALARM, { periodInMinutes: 30 });
+    chrome.alarms.create(SWITCH_CHECK_ALARM, { periodInMinutes: 1 });
     runRitualRecompute().catch((err) => console.error('[cadence] initial ritual recompute failed', err));
+    recomputeSpaces().catch((err) => console.error('[cadence] initial space recompute failed', err));
   });
 
   chrome.alarms.onAlarm.addListener((alarm) => {
@@ -156,11 +165,23 @@ export default defineBackground(() => {
     if (alarm.name.startsWith(RITUAL_TRIGGER_ALARM_PREFIX)) {
       const ritualId = Number(alarm.name.slice(RITUAL_TRIGGER_ALARM_PREFIX.length));
       fireRitualTrigger(ritualId).catch((err) => console.error('[cadence] ritual trigger failed', err));
+      return;
+    }
+
+    if (alarm.name === SPACE_RECOMPUTE_ALARM) {
+      recomputeSpaces().catch((err) => console.error('[cadence] space recompute failed', err));
+      return;
+    }
+
+    if (alarm.name === SWITCH_CHECK_ALARM) {
+      getDemoMode()
+        .then((demoMode) => checkAndOfferSwitch(demoMode))
+        .catch((err) => console.error('[cadence] switch check failed', err));
     }
   });
 
-  chrome.notifications.onButtonClicked.addListener((notificationId) => {
-    handleRitualNotificationButtonClicked(notificationId).catch((err) =>
+  chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+    routeNotificationButtonClicked(notificationId, buttonIndex ?? 0).catch((err) =>
       console.error('[cadence] notification button handler failed', err),
     );
   });
@@ -168,9 +189,9 @@ export default defineBackground(() => {
   chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
     chrome.tabs
       .get(tabId)
-      .then((tab) =>
-        writeEvent({ kind: 'tab_activated', tabId, windowId, rawUrl: tab.url, title: tab.title }),
-      )
+      .then((tab) => writeEvent({ kind: 'tab_activated', tabId, windowId, rawUrl: tab.url, title: tab.title }))
+      .then(() => getDemoMode())
+      .then((demoMode) => checkAndOfferSwitch(demoMode))
       .catch((err) => console.error('[cadence] tab_activated failed', err));
   });
 

@@ -6,3 +6,6 @@ dist
 
 # Extension signing key — never commit, generate locally with scripts/gen-key.sh
 extension-key.pem
+
+# Build-time secrets (proxy URL + token) — see .env.example
+.env
