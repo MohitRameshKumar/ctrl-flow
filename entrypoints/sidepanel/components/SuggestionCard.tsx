@@ -4,9 +4,11 @@ export interface SuggestionCardProps {
   title: string;
   description?: ReactNode;
   acceptLabel?: string;
-  onAccept: () => void;
-  onNotNow: () => void;
-  onNever: () => void;
+  /** Every call site passes an async function; the old `() => void` quietly discarded the
+   *  promise, so a rejected handler became an unhandled rejection. */
+  onAccept: () => void | Promise<void>;
+  onNotNow: () => void | Promise<void>;
+  onNever: () => void | Promise<void>;
 }
 
 /** Reusable Accept / Not now / Never prompt — every Cadence feature suggestion uses this. */

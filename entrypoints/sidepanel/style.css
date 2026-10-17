@@ -395,3 +395,236 @@ body {
   justify-content: flex-end;
   margin-bottom: 10px;
 }
+
+/* Repeat-to-Macro */
+.macro-palette {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.macro-palette-input {
+  flex: 1;
+  background: #11141a;
+  color: #e6e8ee;
+  border: 1px solid #2c313c;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.macro-palette-input:focus {
+  border-color: #8ab4f8;
+  outline: none;
+}
+
+.macro-palette-hint {
+  font-size: 10px;
+  color: #6b7080;
+  white-space: nowrap;
+}
+
+.macro-row.highlight {
+  border-color: #8ab4f8;
+}
+
+.macro-step-click {
+  color: #9299a8;
+}
+
+.macro-chip {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid #5a4a1f;
+  color: #e6d6a6;
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.macro-step-move {
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.macro-run-status {
+  font-size: 11px;
+  color: #9299a8;
+  margin-top: 6px;
+}
+
+.macro-run-status.error {
+  color: #ff8a8a;
+}
+
+/* SuggestionCard has always referenced this; it had no rule until now. */
+.btn-secondary {
+  background: #1c2029;
+  border-color: #2c313c;
+}
+
+/* ---- Run panel ---- */
+
+.run-panel {
+  background: #171b22;
+  border: 1px solid #2c313c;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.run-panel-error {
+  border-color: #5a3030;
+}
+
+.run-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.run-panel-status {
+  font-size: 11px;
+  color: #9299a8;
+  text-align: right;
+}
+
+.run-progress {
+  height: 4px;
+  background: #22262f;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.run-progress-fill {
+  height: 100%;
+  background: #4c8dff;
+  transition: width 120ms linear;
+}
+
+.run-steps {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 12px;
+}
+
+.run-step {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 2px 0;
+  color: #9299a8;
+}
+
+.run-step-mark {
+  width: 12px;
+  flex: none;
+  text-align: center;
+}
+
+.run-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-step-active {
+  color: #e6e9ef;
+}
+
+.run-step-ok .run-step-mark {
+  color: #6fcf97;
+}
+
+.run-step-failed {
+  color: #ff8a8a;
+}
+
+.run-step-skipped {
+  opacity: 0.6;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #9299a8;
+  margin: -2px 0 10px;
+  line-height: 1.4;
+}
+
+/* ---- Hand-authored steps ---- */
+
+.add-step {
+  border: 1px solid #2c313c;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-step-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #9299a8;
+}
+
+.add-step-field span {
+  flex: none;
+  width: 64px;
+}
+
+.add-step-field input,
+.add-step-field select,
+.add-step > select {
+  flex: 1;
+  min-width: 0;
+  background: #1c2029;
+  border: 1px solid #2c313c;
+  border-radius: 4px;
+  color: #e6e9ef;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+/* ---- Mid-flow offer ---- */
+
+.macro-offer {
+  background: #1a2332;
+  border: 1px solid #2f4a6d;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.macro-offer-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.macro-offer-text span {
+  font-size: 11px;
+  color: #9299a8;
+}
+
+.macro-offer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.macro-params {
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

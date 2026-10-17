@@ -1,5 +1,6 @@
 import { db, getEvents, getRitualBySeriesKey, putRitual } from './db';
 import type { CalendarSource } from './calendar';
+import { openUrlsAsGroup } from './tabs';
 import type { CalendarEvent, Ritual, RitualUrl } from './types';
 
 const BEFORE_WINDOW_MS = 15 * 60 * 1000;
@@ -142,18 +143,15 @@ export async function scheduleRitualAlarms(calendarSource: CalendarSource): Prom
 
 export async function openRitualDocs(ritual: Ritual): Promise<void> {
   if (ritual.urls.length === 0) return;
-  const tabs = await Promise.all(ritual.urls.map((u) => chrome.tabs.create({ url: u.url, active: false })));
-  const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined);
-  const firstTabId = tabIds[0];
-  if (firstTabId === undefined) return;
-
-  const groupId = await chrome.tabs.group({ tabIds: [firstTabId, ...tabIds.slice(1)] });
-  await chrome.tabGroups.update(groupId, { title: ritual.title, collapsed: false });
-  await chrome.tabs.update(firstTabId, { active: true });
-  const tab = await chrome.tabs.get(firstTabId);
-  if (tab.windowId !== undefined) {
-    await chrome.windows.update(tab.windowId, { focused: true });
-  }
+  // Was an inline copy of the create/group/focus block. Routing it through the shared helper
+  // picks up three fixes for free: an already-open doc is reused instead of duplicated, the
+  // tabs are created in one window (grouping requires it), and a grouping failure no longer
+  // throws out of the whole function.
+  await openUrlsAsGroup(
+    ritual.urls.map((u) => u.url),
+    ritual.title,
+    { collapsed: false, focus: true },
+  );
 }
 
 async function notifyRitual(ritual: Ritual): Promise<void> {

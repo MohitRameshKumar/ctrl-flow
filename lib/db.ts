@@ -1,5 +1,20 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { CadenceEvent, EventKind, Ritual, Shelf, Space, SpaceUrl } from './types';
+import { recordRun, runWasClean } from './macro-learning';
+import type {
+  CadenceEvent,
+  EventKind,
+  Macro,
+  MacroRunResult,
+  MacroStats,
+  MacroStep,
+  MacroRunRecord,
+  NormalizedMacro,
+  Ritual,
+  RunMode,
+  Shelf,
+  Space,
+  SpaceUrl,
+} from './types';
 
 const db = new Dexie('cadence') as Dexie & {
   events: EntityTable<CadenceEvent, 'id'>;
@@ -7,6 +22,8 @@ const db = new Dexie('cadence') as Dexie & {
   spaces: EntityTable<Space, 'id'>;
   spaceUrls: EntityTable<SpaceUrl, 'id'>;
   shelves: EntityTable<Shelf, 'id'>;
+  macros: EntityTable<Macro, 'id'>;
+  macroRuns: EntityTable<MacroRunRecord, 'id'>;
 };
 
 db.version(1).stores({
@@ -23,6 +40,17 @@ db.version(3).stores({
   spaces: '++id, name, status, createdAt, updatedAt',
   spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
   shelves: '++id, spaceId, createdAt',
+});
+
+// v4 only adds `macros`; events, rituals, spaces, spaceUrls and shelves carry forward unchanged.
+db.version(4).stores({
+  macros: '++id, macroKey, status, updatedAt',
+});
+
+// v5 only adds `macroRuns`; every earlier table carries forward unchanged. Macro rows gained
+// optional fields instead of being migrated — see `withMacroDefaults`.
+db.version(5).stores({
+  macroRuns: '++id, macroId, startedAt',
 });
 
 export { db };
@@ -155,4 +183,188 @@ export async function getLatestShelfForSpace(spaceId: number): Promise<Shelf | u
 
 export async function deleteShelf(id: number): Promise<void> {
   await db.shelves.delete(id);
+}
+
+export const EMPTY_MACRO_STATS: MacroStats = {
+  runs: 0,
+  successes: 0,
+  failures: 0,
+  undos: 0,
+  offersShown: 0,
+  offersDismissed: 0,
+  cleanStreak: 0,
+};
+
+/**
+ * Fills in fields that rows written by an earlier version do not have.
+ *
+ * Normalizing on read rather than migrating keeps the Dexie rule intact — no stored row is ever
+ * rewritten — and means a half-upgraded database is never in an invalid state.
+ */
+export function withMacroDefaults(macro: Macro): NormalizedMacro {
+  return {
+    ...macro,
+    params: macro.params ?? [],
+    stats: { ...EMPTY_MACRO_STATS, ...(macro.stats ?? {}) },
+  };
+}
+
+export async function getMacros(): Promise<NormalizedMacro[]> {
+  return (await db.macros.toArray()).map(withMacroDefaults);
+}
+
+export async function getMacroById(id: number): Promise<NormalizedMacro | undefined> {
+  const macro = await db.macros.get(id);
+  return macro ? withMacroDefaults(macro) : undefined;
+}
+
+export async function getMacroByKey(macroKey: string): Promise<NormalizedMacro | undefined> {
+  const macro = await db.macros.where('macroKey').equals(macroKey).first();
+  return macro ? withMacroDefaults(macro) : undefined;
+}
+
+export function putMacro(macro: Macro): Promise<number | undefined> {
+  return db.macros.put(macro);
+}
+
+export async function updateMacroStatus(id: number, status: Macro['status']): Promise<void> {
+  await db.macros.update(id, { status, updatedAt: Date.now() });
+}
+
+export async function renameMacro(id: number, name: string): Promise<void> {
+  await db.macros.update(id, { name, nameIsUserSet: true, updatedAt: Date.now() });
+}
+
+/**
+ * Records that the user set this step's `enabled` by hand. Pinning the key is what stops the
+ * next recompute from flipping it back.
+ */
+export async function setMacroStepEnabled(id: number, stepKey: string, enabled: boolean): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+  await db.macros.update(id, {
+    steps: macro.steps.map((s) => (s.key === stepKey ? { ...s, enabled } : s)),
+    pinnedStepKeys: macro.pinnedStepKeys.includes(stepKey)
+      ? macro.pinnedStepKeys
+      : [...macro.pinnedStepKeys, stepKey],
+    updatedAt: Date.now(),
+  });
+}
+
+/** Mirrors removeRitualUrl: drops the step and remembers it so recompute never re-adds it. */
+export async function removeMacroStep(id: number, stepKey: string): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+  await db.macros.update(id, {
+    steps: macro.steps.filter((s) => s.key !== stepKey),
+    removedStepKeys: macro.removedStepKeys.includes(stepKey)
+      ? macro.removedStepKeys
+      : [...macro.removedStepKeys, stepKey],
+    updatedAt: Date.now(),
+  });
+}
+
+export async function moveMacroStep(id: number, stepKey: string, delta: number): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+  const from = macro.steps.findIndex((s) => s.key === stepKey);
+  const to = from + delta;
+  if (from === -1 || to < 0 || to >= macro.steps.length) return;
+  const steps = [...macro.steps];
+  const [moved] = steps.splice(from, 1);
+  if (!moved) return;
+  steps.splice(to, 0, moved);
+  await db.macros.update(id, { steps, updatedAt: Date.now() });
+}
+
+/**
+ * Appends a step the user built by hand.
+ *
+ * Pinned immediately: a hand-made step has no support in the observed data, so without pinning
+ * the next recompute would treat it as noise and drop it.
+ */
+export async function addMacroStep(id: number, step: MacroStep): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+  await db.macros.update(id, {
+    steps: [...macro.steps, step],
+    pinnedStepKeys: [...macro.pinnedStepKeys, step.key],
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Stores the run and folds it into the macro's counters.
+ *
+ * v1 wrote `lastRunResult` and nothing read it. The durable per-run rows go to `macroRuns`, and
+ * the rollup on the macro is what promotion and ranking actually consult.
+ */
+export async function recordMacroRun(
+  id: number,
+  result: MacroRunResult,
+  mode: RunMode = 'guided',
+): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+
+  const stats = recordRun({ ...EMPTY_MACRO_STATS, ...(macro.stats ?? {}) }, result);
+
+  await db.macroRuns.add({
+    macroId: id,
+    mode,
+    startedAt: result.startedAt,
+    finishedAt: result.finishedAt,
+    outcomes: result.outcomes,
+    clean: runWasClean(result),
+  });
+
+  await db.macros.update(id, {
+    lastRunAt: result.finishedAt,
+    lastRunResult: result,
+    stats,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function updateMacroStats(
+  id: number,
+  update: (stats: MacroStats) => MacroStats,
+): Promise<void> {
+  const macro = await db.macros.get(id);
+  if (!macro) return;
+  const stats = update({ ...EMPTY_MACRO_STATS, ...(macro.stats ?? {}) });
+  await db.macros.update(id, { stats, updatedAt: Date.now() });
+}
+
+export async function setMacroTrigger(id: number, trigger: Macro['trigger']): Promise<void> {
+  await db.macros.update(id, { trigger, updatedAt: Date.now() });
+}
+
+export function getMacroRuns(macroId: number): Promise<MacroRunRecord[]> {
+  return db.macroRuns.where('macroId').equals(macroId).toArray();
+}
+
+/**
+ * Trims the tables the retention sweep never touched.
+ *
+ * `events` has always been pruned to 14 days, but macros, their run history, and dismissed
+ * rituals and shelves grew without limit.
+ */
+export async function pruneMacroData(cutoff: number): Promise<void> {
+  await db.macroRuns.where('startedAt').below(cutoff).delete();
+
+  // A macro the user rejected is kept briefly so a rescan cannot resurrect it, then dropped.
+  const stale = await db.macros
+    .where('status')
+    .equals('never')
+    .and((m) => m.updatedAt < cutoff)
+    .primaryKeys();
+  if (stale.length > 0) await db.macros.bulkDelete(stale as number[]);
+
+  // Shelves belong to a close-and-save that was never restored.
+  await db.shelves.where('createdAt').below(cutoff).delete();
+}
+
+export async function deleteMacro(id: number): Promise<void> {
+  await db.macros.delete(id);
 }
