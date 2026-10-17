@@ -105,9 +105,12 @@ export async function recomputeMacros(demoMode: boolean): Promise<void> {
  * The honest answer to having only a weekend of history, and it runs through exactly the same
  * candidate pipeline the detectors feed, so there is no second code path to keep correct.
  */
-export async function recordMacroFromRecentActivity(): Promise<Macro | null> {
+export async function recordMacroFromRecentActivity(
+  /** Cadence-side addition for Leader M (mark start/end); omitted means the last 30 seconds. */
+  window?: { fromTs: number; toTs: number },
+): Promise<Macro | null> {
   const now = Date.now();
-  const actions = await chromeActionSource.getActions(now - MACRO_RECORD_WINDOW_MS, now);
+  const actions = await chromeActionSource.getActions(window?.fromTs ?? now - MACRO_RECORD_WINDOW_MS, window?.toTs ?? now);
   const candidate = candidateFromSession(actions);
   if (!candidate) return null;
 
@@ -140,6 +143,9 @@ export async function runMacro(
 
   const [settingMode, speed] = await Promise.all([getRunMode(), getRunSpeed()]);
   const mode = options.mode ?? settingMode;
+  // Parameter values that were redacted (ids, tokens, emails) are never remembered, so they must be supplied.
+  const missing = (macro.params ?? []).filter((p) => !p.lastValue && !options.params?.[p.name]?.trim());
+  if (missing.length > 0) throw new Error(`Enter a value for ${missing.map((p) => `{${p.name}}`).join(', ')} first.`);
   // Substituted before execution so the engine only ever sees concrete URLs. Any parameter the
   // caller did not supply falls back to its last observed value, so a macro is always runnable.
   const resolved = applyParams(macro, options.params);

@@ -22,6 +22,7 @@ import { EMPTY_STATS } from '@/lib/macro-learning';
 import { getDemoMode } from '@/lib/settings';
 import type { Macro, MacroStep } from '@/lib/types';
 import { RunPanel, useRunState } from './RunPanel';
+import { SpaceLetterControl } from './SpaceLetterControl';
 import { SuggestionCard } from './SuggestionCard';
 
 function detectorLabel(detector: Macro['detector']): string {
@@ -117,6 +118,7 @@ function AddStepControls({ macroId, urls, onAdded }: {
   const [selector, setSelector] = useState('');
   const [text, setText] = useState('');
   const [waitSeconds, setWaitSeconds] = useState('2');
+  const [error, setError] = useState('');
 
   const needsPage = kind === 'type' || kind === 'wait_for';
 
@@ -133,7 +135,13 @@ function AddStepControls({ macroId, urls, onAdded }: {
     };
     if (needsPage && (!step.url || !step.selector)) return;
 
-    await addMacroStep(macroId, step);
+    try {
+      await addMacroStep(macroId, step);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setError('');
     setOpen(false);
     setSelector('');
     setText('');
@@ -201,6 +209,8 @@ function AddStepControls({ macroId, urls, onAdded }: {
         </p>
       )}
 
+      {error && <p className="letter-error">{error}</p>}
+
       <div className="space-actions">
         <button className="btn btn-accept" onClick={add}>
           Add
@@ -265,6 +275,8 @@ function MacroCard({
       </div>
 
       <div className="macro-run-status">{explainStatus(macro.status, macro.stats ?? EMPTY_STATS)}</div>
+
+      <SpaceLetterControl kind="macro" spaceId={macroId} name={macro.name} />
 
       <ul className="tab-list">
         {macro.steps.map((step, index) => (

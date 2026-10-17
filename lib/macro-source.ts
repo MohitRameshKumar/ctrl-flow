@@ -7,6 +7,7 @@
  */
 
 import { getEvents } from './db';
+import { getBlocklist, isBlocklisted } from './privacy';
 import { eventToAction } from './macro-detection';
 import { replayMacro } from './macro-replay';
 import type { Macro, MacroRunResult, MacroSource, ObservedAction, ReplayOptions } from './types';
@@ -22,9 +23,11 @@ export const chromeActionSource: ActionSource = {
   id: 'chrome',
 
   async getActions(fromTs: number, toTs: number): Promise<ObservedAction[]> {
-    const events = await getEvents(fromTs, toTs);
+    const [events, blocklist] = await Promise.all([getEvents(fromTs, toTs), getBlocklist()]);
     const actions: ObservedAction[] = [];
     for (const event of events) {
+      // Applied at read time too: a domain blocklisted after it was recorded must not be learned.
+      if (event.domain && isBlocklisted(event.domain, blocklist)) continue;
       const action = eventToAction(event);
       if (action) actions.push(action);
     }

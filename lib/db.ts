@@ -1,8 +1,11 @@
 import Dexie, { type EntityTable } from 'dexie';
 import { recordRun, runWasClean } from './macro-learning';
+import { checkTypedStep, sanitizeParams } from './macro-privacy';
+import { getBlocklist } from './privacy';
 import type {
   CadenceEvent,
   EventKind,
+  FlipPair,
   Macro,
   MacroRunResult,
   MacroStats,
@@ -22,6 +25,7 @@ const db = new Dexie('cadence') as Dexie & {
   spaces: EntityTable<Space, 'id'>;
   spaceUrls: EntityTable<SpaceUrl, 'id'>;
   shelves: EntityTable<Shelf, 'id'>;
+  flipPairs: EntityTable<FlipPair, 'id'>;
   macros: EntityTable<Macro, 'id'>;
   macroRuns: EntityTable<MacroRunRecord, 'id'>;
 };
@@ -42,14 +46,35 @@ db.version(3).stores({
   shelves: '++id, spaceId, createdAt',
 });
 
-// v4 only adds `macros`; events, rituals, spaces, spaceUrls and shelves carry forward unchanged.
+// v4 only adds flipPairs (Focus Flip); every earlier table carries forward unchanged. This version
+// shipped first on this branch, so it keeps its number: installs already at v4 must not be re-keyed.
 db.version(4).stores({
+  flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
+});
+
+// v5 adds `macros` (Repeat-to-Macro). It was v4 on the macro branch; renumbered here because v4 was
+// already taken. The full store set is redeclared so the chain reads unambiguously; every earlier
+// table is identical, so this upgrade changes no stored row.
+db.version(5).stores({
+  events: '++id, ts, kind, domain, tabId, [kind+ts]',
+  rituals: '++id, seriesKey, status, updatedAt',
+  spaces: '++id, name, status, createdAt, updatedAt',
+  spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
+  shelves: '++id, spaceId, createdAt',
+  flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
   macros: '++id, macroKey, status, updatedAt',
 });
 
-// v5 only adds `macroRuns`; every earlier table carries forward unchanged. Macro rows gained
-// optional fields instead of being migrated — see `withMacroDefaults`.
-db.version(5).stores({
+// v6 adds `macroRuns` (was v5 on the macro branch); every earlier table carries forward unchanged.
+// Macro rows gained optional fields instead of being migrated — see `withMacroDefaults`.
+db.version(6).stores({
+  events: '++id, ts, kind, domain, tabId, [kind+ts]',
+  rituals: '++id, seriesKey, status, updatedAt',
+  spaces: '++id, name, status, createdAt, updatedAt',
+  spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
+  shelves: '++id, spaceId, createdAt',
+  flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
+  macros: '++id, macroKey, status, updatedAt',
   macroRuns: '++id, macroId, startedAt',
 });
 
@@ -152,8 +177,13 @@ export function createSpace(space: Omit<Space, 'id'>): Promise<number | undefine
   return db.spaces.add(space);
 }
 
+/** A rename is a user edit: it flips the space to 'user' so a later recompute never regroups or relabels it. */
 export async function renameSpace(id: number, name: string): Promise<void> {
-  await db.spaces.update(id, { name, updatedAt: Date.now() });
+  await db.spaces.update(id, { name, status: 'user', updatedAt: Date.now() });
+}
+
+export async function deleteSpace(id: number): Promise<void> {
+  await db.spaces.delete(id);
 }
 
 export function addSpaceUrl(spaceUrl: Omit<SpaceUrl, 'id'>): Promise<number | undefined> {
@@ -166,6 +196,11 @@ export async function moveSpaceUrl(spaceUrlId: number, toSpaceId: number): Promi
 
 export async function setSpaceUrlAlwaysOpen(spaceUrlId: number, alwaysOpen: boolean): Promise<void> {
   await db.spaceUrls.update(spaceUrlId, { alwaysOpen, source: 'user' });
+}
+
+/** Most recent event of `kind` strictly before `ts` — the activation that started a stay already in progress. */
+export function getLastEventOfKindBefore(kind: EventKind, ts: number): Promise<CadenceEvent | undefined> {
+  return db.events.where('[kind+ts]').between([kind, 0], [kind, ts], true, false).last();
 }
 
 export async function removeSpaceUrl(spaceUrlId: number): Promise<void> {
@@ -183,6 +218,22 @@ export async function getLatestShelfForSpace(spaceId: number): Promise<Shelf | u
 
 export async function deleteShelf(id: number): Promise<void> {
   await db.shelves.delete(id);
+}
+
+export function getFlipPairs(): Promise<FlipPair[]> {
+  return db.flipPairs.toArray();
+}
+
+export function getFlipPair(writingUrl: string, referenceUrl: string): Promise<FlipPair | undefined> {
+  return db.flipPairs.where('[writingUrl+referenceUrl]').equals([writingUrl, referenceUrl]).first();
+}
+
+export function putFlipPair(pair: FlipPair): Promise<number | undefined> {
+  return db.flipPairs.put(pair);
+}
+
+export async function deleteFlipPair(id: number): Promise<void> {
+  await db.flipPairs.delete(id);
 }
 
 export const EMPTY_MACRO_STATS: MacroStats = {
@@ -204,7 +255,7 @@ export const EMPTY_MACRO_STATS: MacroStats = {
 export function withMacroDefaults(macro: Macro): NormalizedMacro {
   return {
     ...macro,
-    params: macro.params ?? [],
+    params: sanitizeParams(macro.params), // redacted on read too, so rows stored before the rule are cleaned
     stats: { ...EMPTY_MACRO_STATS, ...(macro.stats ?? {}) },
   };
 }
@@ -224,7 +275,7 @@ export async function getMacroByKey(macroKey: string): Promise<NormalizedMacro |
 }
 
 export function putMacro(macro: Macro): Promise<number | undefined> {
-  return db.macros.put(macro);
+  return db.macros.put(macro.params ? { ...macro, params: sanitizeParams(macro.params) } : macro);
 }
 
 export async function updateMacroStatus(id: number, status: Macro['status']): Promise<void> {
@@ -284,6 +335,11 @@ export async function moveMacroStep(id: number, stepKey: string, delta: number):
  * the next recompute would treat it as noise and drop it.
  */
 export async function addMacroStep(id: number, step: MacroStep): Promise<void> {
+  // The single gate for typed values (lib/macro-privacy.ts). The caller surfaces the message.
+  if (step.kind === 'type' && step.text) {
+    const check = checkTypedStep({ text: step.text, url: step.url, selector: step.selector }, await getBlocklist());
+    if (!check.ok) throw new Error(`${check.reason} Not saved.`);
+  }
   const macro = await db.macros.get(id);
   if (!macro) return;
   await db.macros.update(id, {
@@ -345,10 +401,9 @@ export function getMacroRuns(macroId: number): Promise<MacroRunRecord[]> {
 }
 
 /**
- * Trims the tables the retention sweep never touched.
- *
- * `events` has always been pruned to 14 days, but macros, their run history, and dismissed
- * rituals and shelves grew without limit.
+ * Trims macro bookkeeping: run history and long-rejected ("never") suggestions. Saved macros are
+ * never removed. Called from the cleanup alarm with a fixed horizon, independent of the events
+ * retention setting.
  */
 export async function pruneMacroData(cutoff: number): Promise<void> {
   await db.macroRuns.where('startedAt').below(cutoff).delete();
@@ -361,8 +416,8 @@ export async function pruneMacroData(cutoff: number): Promise<void> {
     .primaryKeys();
   if (stale.length > 0) await db.macros.bulkDelete(stale as number[]);
 
-  // Shelves belong to a close-and-save that was never restored.
-  await db.shelves.where('createdAt').below(cutoff).delete();
+  // Shelves are deliberately NOT pruned here (the macro branch did): a shelved space is a saved item
+  // the user expects to restore, and retention in this app deletes events only.
 }
 
 export async function deleteMacro(id: number): Promise<void> {

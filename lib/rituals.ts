@@ -32,6 +32,7 @@ async function collectUrlsNearOccurrence(
   const results: { url: string; title?: string }[] = [];
   for (const e of events) {
     if (e.kind !== 'tab_activated' && e.kind !== 'tab_opened' && e.kind !== 'navigated') continue;
+    if (e.programmatic) continue; // Cadence-initiated switches are not the user's behaviour
     if (!e.url || isExcludedFromRitual(e.url)) continue;
     results.push({ url: e.url, title: e.title });
   }

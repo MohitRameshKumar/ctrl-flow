@@ -111,6 +111,17 @@ export async function takeRunCommand(runId: string): Promise<RunCommandName | nu
   return pending.command;
 }
 
+/**
+ * True when a Stop is waiting for this run, without consuming it.
+ *
+ * Lets the host cut a long sleep short; the engine still consumes the command through
+ * `takeRunCommand` at its next drain, so there is exactly one place that acts on it.
+ */
+export async function isStopPending(runId: string): Promise<boolean> {
+  const pending = await readSession<MacroRunCommand>(MACRO_RUN_COMMAND_KEY);
+  return pending?.runId === runId && pending.command === 'stop';
+}
+
 export function clearRunCommand(): Promise<void> {
   return removeSession(MACRO_RUN_COMMAND_KEY);
 }

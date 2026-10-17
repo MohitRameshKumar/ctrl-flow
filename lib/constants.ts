@@ -88,6 +88,9 @@ export const MACRO_PACE_SILENT_MS = 120;
  * keeps the MV3 service worker from being killed at 30s idle during a long pause — the heartbeat
  * and the progress report are deliberately the same mechanism.
  */
+/** How often a sleeping run peeks for a pending Stop. Cadence-side addition: Stop must feel immediate. */
+export const MACRO_COMMAND_POLL_MS = 250;
+
 export const MACRO_HEARTBEAT_MS = 15 * 1000;
 
 /** A run whose heartbeat is older than this had its worker killed; it is finalized, not resumed. */

@@ -10,6 +10,7 @@ export default defineConfig({
     // Detection is pure by construction, so almost nothing needs a DOM. The one file that does
     // opts in with a `@vitest-environment happy-dom` docblock.
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    // Top level only: tests/unit/*.test.ts use node:test (`npm run test:unit`), tests/e2e is Playwright.
+    include: ['tests/*.test.ts'],
   },
 });

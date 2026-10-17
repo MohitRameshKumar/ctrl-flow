@@ -11,6 +11,7 @@ import { executeMacro, summarizeRun } from './macro-executor';
 import {
   clearRunCommand,
   isStale,
+  isStopPending,
   isTerminal,
   readRunState,
   setReplayInProgress,
@@ -119,7 +120,10 @@ export async function replayMacro(macro: Macro, opts: ReplayOptions): Promise<Ma
     // as another occurrence of the macro that generated them.
     await setReplayInProgress(true);
 
-    const host = createChromeHost({ nextCommand: () => takeRunCommand(runId) });
+    const host = createChromeHost({
+      nextCommand: () => takeRunCommand(runId),
+      stopPending: () => isStopPending(runId),
+    });
     const result = await executeMacro(macro, host, state, {
       mode: opts.mode,
       speed: opts.speed,

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getEvents } from '@/lib/db';
+import { FocusFlipSection } from './components/FocusFlipSection';
+import { LeaderKeysSection } from './components/LeaderKeysSection';
+import { PrivacySettings } from './components/PrivacySettings';
 import { consumeMacroPaletteRequest } from '@/lib/macros';
 import { setAutoRunEnabled, setRunMode, setRunSpeed } from '@/lib/settings';
 import type { RunMode, RunSpeed } from '@/lib/types';
@@ -9,6 +12,7 @@ import { Header } from './components/Header';
 import { RitualsTab } from './components/RitualsTab';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SpacesTab } from './components/SpacesTab';
+import { StandupTab } from './components/StandupTab';
 import { Tabs, type TabName } from './components/Tabs';
 
 function startOfToday(): number {
@@ -110,8 +114,14 @@ export default function App() {
         {tab === 'Rituals' && <RitualsTab />}
         {tab === 'Spaces' && <SpacesTab />}
         {tab === 'Macros' && <MacrosTab paletteNonce={paletteNonce} />}
-        {tab === 'Standup' && <div className="coming-soon">{tab} — coming soon</div>}
+        {tab === 'Standup' && <StandupTab />}
       </main>
+
+      <FocusFlipSection />
+
+      <LeaderKeysSection />
+
+      <PrivacySettings />
 
       <SettingsPanel
         calendarSource={calendarSource}

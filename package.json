@@ -12,10 +12,15 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "postinstall": "wxt prepare",
-    "test:e2e": "playwright test"
+    "build:test": "WXT_TEST=1 WXT_PROXY_URL=http://localhost:4411 WXT_PROXY_TOKEN=test-token wxt build",
+    "test:no-test-hooks": "npm run build && node e2e/check-no-test-hooks.mjs",
+    "test:e2e": "npm run test:no-test-hooks && npm run build:test && playwright test",
+    "test:e2e:live": "playwright test --config=playwright.live.config.ts",
+    "test:e2e:macros": "playwright test --config=playwright.macros.config.ts",
+    "test:unit": "node --test \"tests/unit/*.test.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "dexie": "^4.4.6",

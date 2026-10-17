@@ -33,6 +33,11 @@ export async function getCalendarFallbackNotice(): Promise<string | null> {
   return notice ?? null;
 }
 
+/** Test-only seeding hook: overwrites the demo calendar with exact synthetic data. */
+export async function setDemoCalendarEvents(events: CalendarEvent[]): Promise<void> {
+  await chrome.storage.local.set({ [DEMO_EVENTS_KEY]: events });
+}
+
 /** Demo events for a hackathon-friendly offline calendar. Seeded once from public/demo-calendar.json, then cached in storage. */
 export class DemoCalendarSource implements CalendarSource {
   async getEvents(fromTs: number, toTs: number): Promise<CalendarEvent[]> {

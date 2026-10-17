@@ -1,4 +1,4 @@
-import { getEventsByKind, getSpaceUrls } from './db';
+import { getEventsByKind, getLastEventOfKindBefore, getSpaceUrls } from './db';
 import { normalizeUrl } from './normalize';
 
 const SWITCH_THROTTLE_KEY = 'switchThrottle';
@@ -128,7 +128,12 @@ export async function checkForSwitch(demoMode: boolean): Promise<SwitchCandidate
   const spaceUrls = await getSpaceUrls();
   const urlToSpace = new Map(spaceUrls.map((u) => [u.url, u.spaceId]));
 
-  const events = await getEventsByKind('tab_activated', now - SWITCH_WINDOW_MS, now);
+  const windowStart = now - SWITCH_WINDOW_MS;
+  const inWindow = await getEventsByKind('tab_activated', windowStart, now);
+  // The activation that began a stay already in progress may predate the window (e.g. 8 minutes of
+  // typing in one doc). Include it so that stay counts; computeDwellBySpace clamps it to the window.
+  const prior = await getLastEventOfKindBefore('tab_activated', windowStart);
+  const events = (prior ? [prior, ...inWindow] : inWindow).filter((e) => !e.programmatic);
   const activations: Activation[] = events
     .filter((e): e is typeof e & { url: string } => !!e.url)
     .map((e) => ({ url: e.url, ts: e.ts }))

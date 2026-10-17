@@ -8,6 +8,7 @@
  */
 
 import { normalizeUrl } from './normalize';
+import { markProgrammaticNav } from './programmatic';
 
 export async function findOpenTabIdsForUrls(urls: Set<string>): Promise<number[]> {
   const tabs = await chrome.tabs.query({});
@@ -27,6 +28,10 @@ export async function findOpenTabIdForUrl(url: string): Promise<number | undefin
 
 export async function focusTab(tab: chrome.tabs.Tab | undefined): Promise<void> {
   if (!tab?.id) return;
+  // Every Cadence-initiated activation (ritual docs, space restore, macro replay) goes through here,
+  // so marking it once keeps all of them out of the user's own behaviour (rituals, spaces, switch
+  // offer, Focus Flip learning).
+  await markProgrammaticNav(tab.id);
   await chrome.tabs.update(tab.id, { active: true });
   if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
 }

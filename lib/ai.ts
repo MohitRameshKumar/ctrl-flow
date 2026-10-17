@@ -18,7 +18,11 @@ export type RunTaskResult<T = unknown> = { ok: true; data: T } | { ok: false; er
  * Always records the exact request/response in chrome.storage.local for the privacy
  * viewer in Settings, whether the call succeeds or fails.
  */
-export async function runTask<T = unknown>(task: TaskName, input: unknown): Promise<RunTaskResult<T>> {
+export async function runTask<T = unknown>(
+  task: TaskName,
+  input: unknown,
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<RunTaskResult<T>> {
   const proxyUrl = import.meta.env.WXT_PROXY_URL;
   const token = import.meta.env.WXT_PROXY_TOKEN;
 
@@ -36,7 +40,7 @@ export async function runTask<T = unknown>(task: TaskName, input: unknown): Prom
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${proxyUrl}/task`, {

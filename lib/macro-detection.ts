@@ -43,6 +43,10 @@ import type {
  */
 export function eventToAction(e: CadenceEvent): ObservedAction | null {
   if (!e.url) return null;
+  // Cadence-side filters. `synthetic` is simulated data; `programmatic` is a switch Cadence itself
+  // made (ritual docs, space restore, Focus Flip, macro replay). Neither is the user's behaviour,
+  // so neither may be learned as a routine.
+  if (e.synthetic || e.programmatic) return null;
 
   if (e.kind === 'click') {
     if (!e.selector) return null;

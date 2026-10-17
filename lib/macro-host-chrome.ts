@@ -10,10 +10,12 @@
  * against a timer.
  */
 
-import { MACRO_INJECT_TIMEOUT_MS } from './constants';
+import { MACRO_COMMAND_POLL_MS, MACRO_INJECT_TIMEOUT_MS } from './constants';
 import { clickBySelector, typeIntoSelector } from './macro-injected';
 import type { OpenedTabInfo, RunHost, TabCondition } from './macro-executor';
+import { checkTypedStep } from './macro-privacy';
 import { writeRunState } from './macro-run-channel';
+import { getBlocklist, isUrlBlocked } from './privacy';
 import { findOpenTabIdForUrl, focusTab as focusTabById, waitForTabComplete } from './tabs';
 import type { MacroRunState, RunCommandName } from './types';
 
@@ -42,12 +44,23 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 export interface ChromeHostOptions {
   /** Supplied by the run loop so commands can be consumed with the right run id. */
   nextCommand: () => Promise<RunCommandName | null>;
+  /** True when a Stop is pending; polled during sleeps so Stop takes effect within ~250ms. */
+  stopPending?: () => Promise<boolean>;
 }
 
 export function createChromeHost(opts: ChromeHostOptions): RunHost {
   return {
     now: () => Date.now(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    async sleep(ms) {
+      // Without a stop probe this is the plain timer. With one, a long wait (pace, `wait` step, the
+      // 15s pause heartbeat) is cut short as soon as a Stop is pending; the engine then drains it.
+      if (!opts.stopPending) return new Promise<void>((resolve) => setTimeout(resolve, ms));
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(MACRO_COMMAND_POLL_MS, end - Date.now())));
+        if (await opts.stopPending()) return;
+      }
+    },
 
     async openTab(url, { active }) {
       try {
@@ -167,7 +180,15 @@ export function createChromeHost(opts: ChromeHostOptions): RunHost {
       return clicked ? { clicked: true } : { clicked: false, reason: 'element not found' };
     },
 
+    async isUrlBlocked(url) {
+      return isUrlBlocked(url, await getBlocklist());
+    },
+
     async type(tabId, selector, text) {
+      // Replay-time half of the typed-value gate (the store-time half is db.addMacroStep).
+      const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+      const check = checkTypedStep({ text, url: tab?.url, selector }, await getBlocklist());
+      if (!check.ok) return { ok: false, reason: `refused: ${check.reason}` };
       const results = await withTimeout(
         chrome.scripting.executeScript({
           target: { tabId, allFrames: true },

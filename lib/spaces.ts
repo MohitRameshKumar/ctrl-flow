@@ -1,9 +1,20 @@
 import { runTask } from './ai';
 import {
+  MAX_CONTEXT_URLS,
+  computePairStats,
+  edgesForUrls,
+  groupByCoUsage,
+  pickContextUrls,
+  truncateTitle,
+  typedCountsForUrls,
+  type PairStat,
+} from './co-usage';
+import {
   addShelf,
   addSpaceUrl,
   createSpace,
   deleteShelf,
+  deleteSpace,
   getEventsByKind,
   getLatestShelfForSpace,
   getSpaceById,
@@ -11,12 +22,20 @@ import {
   getSpaceUrls,
   getSpaceUrlsForSpace,
   getSpaces,
+  removeSpaceUrl,
 } from './db';
 import { normalizeUrl } from './normalize';
 import { findOpenTabIdsForUrls, focusTab, openUrlsAsGroup } from './tabs';
 import { getBlocklist, isBlocklisted } from './privacy';
 import { checkForSwitch, neverSwitchForSpace, recordSwitchOffer, type SwitchCandidate } from './switch-detection';
-import type { AssignTabsInput, AssignTabsOutput, NameSpacesInput, NameSpacesOutput, Space } from './types';
+import type {
+  AssignTabsInput,
+  AssignTabsOutput,
+  NameSpacesInput,
+  NameSpacesOutput,
+  Space,
+  SpaceUrl,
+} from './types';
 
 export const SPACE_NOTIFICATION_PREFIX = 'cadence-space:';
 export const SPACE_RECOMPUTE_ALARM = 'cadence-space-recompute';
@@ -25,6 +44,7 @@ const PENDING_SWITCH_KEY = 'pendingSwitchSuggestion';
 
 const ACTIVATION_WINDOW_MS = 48 * 60 * 60 * 1000;
 const RECENT_TYPING_WINDOW_MS = 2 * 60 * 1000;
+const MAX_CANDIDATES = 150;
 
 export interface Candidate {
   url: string;
@@ -46,7 +66,7 @@ async function getCandidateUrls(): Promise<Candidate[]> {
   const now = Date.now();
   const events = await getEventsByKind('tab_activated', now - ACTIVATION_WINDOW_MS, now);
   for (const e of events) {
-    if (!e.url || candidates.has(e.url)) continue;
+    if (!e.url || e.programmatic || candidates.has(e.url)) continue;
     candidates.set(e.url, { url: e.url, title: e.title });
   }
 
@@ -122,74 +142,187 @@ async function applyAssignTabsResult(
   }
 }
 
-/** Groups candidates by domain into "auto (offline)" spaces when the AI call fails. */
-export async function applyDomainFallback(candidates: Candidate[]): Promise<void> {
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** "a.com", "a.com + b.com", or "a.com + b.com +2" — most-used domains first. */
+function offlineGroupName(group: Candidate[]): string {
+  const counts = new Map<string, number>();
+  for (const c of group) {
+    const host = hostnameOf(c.url);
+    if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
+  }
+  const domains = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([d]) => d);
+  if (domains.length <= 2) return domains.join(' + ');
+  return `${domains.slice(0, 2).join(' + ')} +${domains.length - 2}`;
+}
+
+/**
+ * Groups candidates by domain into "auto (offline)" spaces when the AI call fails. Domains whose
+ * tabs were strongly used together (direct switches) are merged into one space, even across domains.
+ */
+export async function applyDomainFallback(
+  candidates: Candidate[],
+  stats: Map<string, PairStat> = new Map(),
+): Promise<void> {
   const now = Date.now();
   const existingSpaces = await getSpaces();
-  const byDomain = new Map<string, Candidate[]>();
+  const valid = candidates.filter((c) => hostnameOf(c.url) !== null);
+  const groups = groupByCoUsage(
+    valid,
+    (c) => c.url,
+    stats,
+    undefined,
+    (a, b) => hostnameOf(a.url) === hostnameOf(b.url),
+  );
 
-  for (const c of candidates) {
-    let domain: string;
-    try {
-      domain = new URL(c.url).hostname;
-    } catch {
-      continue;
-    }
-    const list = byDomain.get(domain) ?? [];
-    list.push(c);
-    byDomain.set(domain, list);
-  }
-
-  for (const [domain, urls] of byDomain) {
-    let space = existingSpaces.find((s) => s.name === domain);
+  for (const group of groups) {
+    const name = offlineGroupName(group);
+    let space = existingSpaces.find((s) => s.name === name);
     let spaceId: number | undefined;
     if (space?.id !== undefined) {
       spaceId = space.id;
     } else {
-      spaceId = await createSpace({ name: domain, status: 'auto_offline', createdAt: now, updatedAt: now });
+      spaceId = await createSpace({ name, status: 'auto_offline', createdAt: now, updatedAt: now });
       if (spaceId === undefined) continue;
-      space = { id: spaceId, name: domain, status: 'auto_offline', createdAt: now, updatedAt: now };
+      space = { id: spaceId, name, status: 'auto_offline', createdAt: now, updatedAt: now };
       existingSpaces.push(space);
     }
-    for (const u of urls) {
+    for (const u of group) {
       if (await isAlreadyAssigned(u.url)) continue;
       await addSpaceUrl({ spaceId, url: u.url, title: u.title, source: 'ai', alwaysOpen: false });
     }
   }
 }
 
-/** First run calls name_spaces; later runs call assign_tabs for unassigned URLs only. Falls back to domain grouping on AI failure. */
-export async function recomputeSpaces(): Promise<void> {
-  const existingSpaces = await getSpaces();
-  const candidates = await getCandidateUrls();
+interface UsageSignals {
+  stats: Map<string, PairStat>;
+  burstsByUrl: Map<string, number>;
+}
 
-  if (existingSpaces.length === 0) {
-    if (candidates.length === 0) return;
-    const input: NameSpacesInput = { urls: candidates.map((c) => ({ url: c.url, title: c.title ?? '' })) };
+/** Local-only co-usage inputs: who was switched between, and which tabs had typing (counts, never content). */
+async function gatherUsageSignals(): Promise<UsageSignals> {
+  const now = Date.now();
+  const from = now - ACTIVATION_WINDOW_MS;
+  const [activated, typing] = await Promise.all([
+    getEventsByKind('tab_activated', from, now),
+    getEventsByKind('typing_burst', from, now),
+  ]);
+  const activations = activated
+    .filter((e): e is typeof e & { url: string } => !!e.url && !e.programmatic)
+    .map((e) => ({ url: e.url, ts: e.ts }));
+  const burstsByUrl = new Map<string, number>();
+  for (const e of typing) {
+    if (e.url) burstsByUrl.set(e.url, (burstsByUrl.get(e.url) ?? 0) + 1);
+  }
+  return { stats: computePairStats(activations), burstsByUrl };
+}
+
+function toAiUrls(list: Candidate[]): { url: string; title: string }[] {
+  return list.map((c) => ({ url: c.url, title: truncateTitle(c.title) }));
+}
+
+/**
+ * First run (no real spaces yet) calls name_spaces; later runs call assign_tabs for unassigned URLs only.
+ * Tabs sitting in auto-offline domain spaces (never edited by the user) are re-eligible so a working
+ * proxy can regroup them. Falls back to co-usage-aware domain grouping on AI failure.
+ */
+export async function recomputeSpaces(): Promise<void> {
+  const [allSpaces, allSpaceUrls] = await Promise.all([getSpaces(), getSpaceUrls()]);
+  const candidates = (await getCandidateUrls()).slice(0, MAX_CANDIDATES);
+  const { stats, burstsByUrl } = await gatherUsageSignals();
+
+  const offlineIds = new Set(allSpaces.filter((s) => s.status === 'auto_offline').map((s) => s.id));
+  const reassignable = new Map<string, SpaceUrl>();
+  for (const u of allSpaceUrls) {
+    if (offlineIds.has(u.spaceId) && u.source === 'ai' && !u.alwaysOpen) reassignable.set(u.url, u);
+  }
+  const fixedUrls = new Set(allSpaceUrls.filter((u) => !reassignable.has(u.url)).map((u) => u.url));
+  const pool = candidates.filter((c) => !fixedUrls.has(c.url));
+  if (pool.length === 0) return;
+
+  const poolUrls = pool.map((c) => c.url);
+  const liveSpaces = allSpaces.filter((s) => s.status !== 'auto_offline');
+  let coveredUrls: Set<string> | null = null;
+
+  if (liveSpaces.length === 0) {
+    const input: NameSpacesInput = {
+      urls: toAiUrls(pool),
+      edges: edgesForUrls(poolUrls, stats),
+      typed: typedCountsForUrls(poolUrls, burstsByUrl),
+    };
     const result = await runTask<NameSpacesOutput>('name_spaces', input);
     if (result.ok) {
-      await applyNameSpacesResult(result.data, candidates);
-    } else {
-      await applyDomainFallback(candidates);
+      const poolSet = new Set(poolUrls);
+      const spaces = result.data.map((sp) => ({ ...sp, urls: sp.urls.filter((u) => poolSet.has(u)) }));
+      coveredUrls = new Set(spaces.flatMap((sp) => sp.urls));
+      await releaseOfflineRows(coveredUrls, reassignable);
+      await applyNameSpacesResult(spaces, pool);
     }
+  } else {
+    const spaceByUrl = new Map(allSpaceUrls.map((u) => [u.url, u.spaceId]));
+    const nameById = new Map(allSpaces.map((s) => [s.id, s.name]));
+    const assignedCandidates = candidates.filter((c) => fixedUrls.has(c.url) && spaceByUrl.has(c.url));
+    const contextUrls = pickContextUrls(
+      poolUrls,
+      assignedCandidates.map((c) => c.url),
+      stats,
+      MAX_CONTEXT_URLS,
+    );
+    const contextCandidates = contextUrls.map((u) => assignedCandidates.find((c) => c.url === u)!);
+    const all = [...pool, ...contextCandidates];
+    const allUrls = all.map((c) => c.url);
+
+    const input: AssignTabsInput = {
+      urls: toAiUrls(pool),
+      existingSpaces: liveSpaces.map((s) => s.name),
+      context: contextCandidates.map((c) => ({
+        url: c.url,
+        title: truncateTitle(c.title),
+        space: nameById.get(spaceByUrl.get(c.url)!) ?? '',
+      })),
+      edges: edgesForUrls(allUrls, stats),
+      typed: typedCountsForUrls(allUrls, burstsByUrl),
+    };
+    const result = await runTask<AssignTabsOutput>('assign_tabs', input);
+    if (result.ok) {
+      const poolSet = new Set(poolUrls);
+      const assignments = result.data.filter((a) => poolSet.has(a.url));
+      coveredUrls = new Set(assignments.filter((a) => a.spaceName || a.newSpaceName).map((a) => a.url));
+      await releaseOfflineRows(coveredUrls, reassignable);
+      await applyAssignTabsResult(assignments, pool, liveSpaces);
+    }
+  }
+
+  if (coveredUrls === null) {
+    // AI unavailable: leave existing offline groupings alone, group only what's still unassigned.
+    await applyDomainFallback(
+      pool.filter((c) => !reassignable.has(c.url)),
+      stats,
+    );
     return;
   }
 
-  const unassigned: Candidate[] = [];
-  for (const c of candidates) {
-    if (!(await isAlreadyAssigned(c.url))) unassigned.push(c);
-  }
-  if (unassigned.length === 0) return;
+  await deleteEmptyOfflineSpaces(offlineIds);
+}
 
-  const input: AssignTabsInput = {
-    urls: unassigned.map((c) => ({ url: c.url, title: c.title ?? '' })),
-    existingSpaces: existingSpaces.map((s) => s.name),
-  };
-  const result = await runTask<AssignTabsOutput>('assign_tabs', input);
-  if (result.ok) {
-    await applyAssignTabsResult(result.data, unassigned, existingSpaces);
-  } else {
-    await applyDomainFallback(unassigned);
+/** Frees the AI-owned rows of auto-offline spaces whose URLs the AI is about to place elsewhere. */
+async function releaseOfflineRows(urls: Set<string>, reassignable: Map<string, SpaceUrl>): Promise<void> {
+  for (const url of urls) {
+    const row = reassignable.get(url);
+    if (row?.id !== undefined) await removeSpaceUrl(row.id);
+  }
+}
+
+async function deleteEmptyOfflineSpaces(offlineIds: Set<number | undefined>): Promise<void> {
+  for (const id of offlineIds) {
+    if (id === undefined) continue;
+    if ((await getSpaceUrlsForSpace(id)).length === 0) await deleteSpace(id);
   }
 }
 
@@ -270,6 +403,37 @@ export async function restoreSpace(spaceId: number): Promise<void> {
   );
 
   if (shelf.id !== undefined) await deleteShelf(shelf.id);
+}
+
+/**
+ * "Project switch" (leader key + a space's letter): bring the space back. Restores a collapsed group
+ * or shelf if there is one; else focuses an open tab of the space; else reopens its saved tabs.
+ */
+export async function switchToSpace(spaceId: number): Promise<void> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return;
+  const spaceUrls = await getSpaceUrlsForSpace(spaceId);
+
+  const hasGroup = (await chrome.tabGroups.query({ title: space.name })).length > 0;
+  if (hasGroup || (await getLatestShelfForSpace(spaceId))) {
+    await restoreSpace(spaceId);
+    return;
+  }
+
+  const openIds = await findOpenTabIdsForUrls(new Set(spaceUrls.map((u) => u.url)));
+  if (openIds[0] !== undefined) {
+    await focusTab(await chrome.tabs.get(openIds[0]));
+    return;
+  }
+
+  const toOpen = spaceUrls.slice(0, 8);
+  if (toOpen.length === 0) return;
+  const tabs = await Promise.all(toOpen.map((u) => chrome.tabs.create({ url: u.url, active: false })));
+  const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined);
+  if (tabIds[0] === undefined) return;
+  const groupId = await chrome.tabs.group({ tabIds: [tabIds[0], ...tabIds.slice(1)] });
+  await chrome.tabGroups.update(groupId, { title: space.name, collapsed: false });
+  await focusTab(await chrome.tabs.get(tabIds[0]));
 }
 
 async function isSidePanelOpen(): Promise<boolean> {
