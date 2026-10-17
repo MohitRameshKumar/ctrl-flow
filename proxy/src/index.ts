@@ -1,7 +1,7 @@
+import type { LlmEnv } from './llm';
 import { TASK_NAMES, runTask, type TaskName } from './tasks';
 
-export interface Env {
-  ANTHROPIC_API_KEY: string;
+export interface Env extends LlmEnv {
   CADENCE_TOKEN: string;
   ALLOWED_ORIGIN: string;
 }
@@ -70,7 +70,7 @@ export default {
       return json(400, { error: 'unknown task' }, origin);
     }
 
-    const result = await runTask(task, env.ANTHROPIC_API_KEY, input);
+    const result = await runTask(task, env, input);
     return json(result.status, result.body, origin);
   },
 } satisfies ExportedHandler<Env>;

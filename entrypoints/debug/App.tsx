@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { clearAll, countByKind, exportAll, getEvents } from '@/lib/db';
+import { simulateTwoPastTeamSyncs, wipeSyntheticRitualData } from '@/lib/ritual-simulation';
 import type { CadenceEvent, EventKind } from '@/lib/types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -23,6 +24,7 @@ export default function App() {
   const [kindCounts, setKindCounts] = useState<Record<string, number>>({});
   const [recent, setRecent] = useState<CadenceEvent[]>([]);
   const [paused, setPaused] = useState(false);
+  const [simStatus, setSimStatus] = useState('');
 
   const refresh = useCallback(async () => {
     const now = Date.now();
@@ -60,6 +62,25 @@ export default function App() {
     await refresh();
   };
 
+  const simulate = async () => {
+    setSimStatus('Simulating…');
+    try {
+      const r = await simulateTwoPastTeamSyncs();
+      setSimStatus(
+        `Added ${r.occurrences} past Team sync occurrences with ${r.tabs} open tab(s). ${r.rituals} ritual(s) now exist — check the Rituals tab, then press "Test now".`,
+      );
+      await refresh();
+    } catch (err) {
+      setSimStatus(`Simulation failed: ${String(err)}`);
+    }
+  };
+
+  const wipeSimulation = async () => {
+    await wipeSyntheticRitualData();
+    setSimStatus('Synthetic events, occurrences, and the Team sync ritual were removed.');
+    await refresh();
+  };
+
   const kinds: EventKind[] = [
     'tab_activated',
     'tab_opened',
@@ -86,6 +107,14 @@ export default function App() {
           Clear all data
         </button>
         <button onClick={refresh}>Refresh</button>
+      </div>
+
+      <div className="toolbar">
+        <button onClick={simulate}>Simulate 2 past Team syncs</button>
+        <button className="danger" onClick={wipeSimulation}>
+          Wipe simulated data
+        </button>
+        <span>{simStatus}</span>
       </div>
 
       <div className="cards">

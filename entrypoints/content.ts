@@ -1,3 +1,4 @@
+import { isSensitiveField } from '@/lib/privacy';
 import type { ContentMessage } from '@/lib/types';
 
 const MODIFIER_ONLY_KEYS = new Set([
@@ -19,6 +20,11 @@ const MODIFIER_ONLY_KEYS = new Set([
   'Insert',
   'Fn',
 ]);
+
+/** True while the Cadence leader-key overlay is open: its keystrokes and clicks are never recorded. */
+function leaderOverlayOpen(): boolean {
+  return (globalThis as unknown as Record<string, boolean | undefined>).__cadenceLeaderOpen === true;
+}
 
 function send(message: ContentMessage): void {
   chrome.runtime.sendMessage(message).catch(() => {
@@ -79,6 +85,7 @@ function buildClickInfo(el: Element): { selector: string; label?: string } {
 }
 
 function onClick(e: MouseEvent): void {
+  if (leaderOverlayOpen()) return;
   const target = e.target;
   if (!(target instanceof Element)) return;
   const { selector, label } = buildClickInfo(target);
@@ -120,6 +127,7 @@ function createTypingTracker() {
   }
 
   function onKeydown(e: KeyboardEvent): void {
+    if (leaderOverlayOpen()) return;
     if (MODIFIER_ONLY_KEYS.has(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
     keyCount++;
     if (timer) clearTimeout(timer);
@@ -127,6 +135,73 @@ function createTypingTracker() {
   }
 
   return { onKeydown };
+}
+
+/**
+ * Focus Flip activity pulses. Entirely inert unless the user has turned Focus Flip on (the flag is
+ * read from storage and kept in sync). A pulse only says "a key / scroll / click happened" — no key
+ * values, positions, or content — throttled to one per 500 ms per kind, with a trailing pulse so the
+ * background's "last keystroke" is never earlier than the real one.
+ */
+function createFocusFlipPulses() {
+  const THROTTLE_MS = 500;
+  let enabled = false;
+  const lastSent: Record<string, number> = {};
+  const trailing: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+
+  chrome.storage.local
+    .get('focusFlipEnabled')
+    .then((r) => {
+      enabled = r.focusFlipEnabled === true;
+    })
+    .catch(() => undefined);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.focusFlipEnabled) enabled = changes.focusFlipEnabled.newValue === true;
+  });
+
+  function pulse(what: 'key' | 'scroll' | 'click'): void {
+    if (!enabled) return;
+    const now = Date.now();
+    const since = now - (lastSent[what] ?? 0);
+    if (since >= THROTTLE_MS) {
+      lastSent[what] = now;
+      send({ type: 'activity', what });
+      return;
+    }
+    if (trailing[what]) return;
+    trailing[what] = setTimeout(() => {
+      trailing[what] = undefined;
+      lastSent[what] = Date.now();
+      if (enabled) send({ type: 'activity', what });
+    }, THROTTLE_MS - since);
+  }
+
+  let sensitiveFocused = false;
+  function onFocusChange(e: FocusEvent): void {
+    if (!enabled) return;
+    const el = e.target;
+    let sensitive = false;
+    if (e.type === 'focusin' && el instanceof HTMLInputElement) {
+      sensitive = isSensitiveField(el.type, el.getAttribute('autocomplete'), el.name || el.id || undefined);
+    }
+    if (sensitive !== sensitiveFocused) {
+      sensitiveFocused = sensitive;
+      send({ type: 'sensitive_focus', value: sensitive });
+    }
+  }
+
+  return {
+    onKeydown(e: KeyboardEvent): void {
+      if (leaderOverlayOpen()) return;
+      if (MODIFIER_ONLY_KEYS.has(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
+      pulse('key');
+    },
+    onScroll: () => pulse('scroll'),
+    onClick: () => {
+      if (!leaderOverlayOpen()) pulse('click');
+    },
+    onFocusChange,
+  };
 }
 
 export default defineContentScript({
@@ -137,7 +212,13 @@ export default defineContentScript({
   matchOriginAsFallback: true,
   main() {
     const { onKeydown } = createTypingTracker();
+    const flip = createFocusFlipPulses();
     document.addEventListener('click', onClick, { capture: true });
+    document.addEventListener('click', flip.onClick, { capture: true });
+    document.addEventListener('scroll', flip.onScroll, { capture: true, passive: true });
+    document.addEventListener('focusin', flip.onFocusChange, { capture: true });
+    document.addEventListener('focusout', flip.onFocusChange, { capture: true });
+    window.addEventListener('keydown', flip.onKeydown, { capture: true });
     document.addEventListener('change', onFieldChange, { capture: true });
     // Rich editors (Google Docs, custom contenteditable widgets) commonly call
     // stopImmediatePropagation() on keydown at the document level or below to own

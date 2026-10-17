@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { CadenceEvent, EventKind, Ritual, Shelf, Space, SpaceUrl } from './types';
+import type { CadenceEvent, EventKind, FlipPair, Ritual, Shelf, Space, SpaceUrl } from './types';
 
 const db = new Dexie('cadence') as Dexie & {
   events: EntityTable<CadenceEvent, 'id'>;
@@ -7,6 +7,7 @@ const db = new Dexie('cadence') as Dexie & {
   spaces: EntityTable<Space, 'id'>;
   spaceUrls: EntityTable<SpaceUrl, 'id'>;
   shelves: EntityTable<Shelf, 'id'>;
+  flipPairs: EntityTable<FlipPair, 'id'>;
 };
 
 db.version(1).stores({
@@ -23,6 +24,11 @@ db.version(3).stores({
   spaces: '++id, name, status, createdAt, updatedAt',
   spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
   shelves: '++id, spaceId, createdAt',
+});
+
+// v4 only adds flipPairs (Focus Flip); every earlier table carries forward unchanged.
+db.version(4).stores({
+  flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
 });
 
 export { db };
@@ -124,8 +130,13 @@ export function createSpace(space: Omit<Space, 'id'>): Promise<number | undefine
   return db.spaces.add(space);
 }
 
+/** A rename is a user edit: it flips the space to 'user' so a later recompute never regroups or relabels it. */
 export async function renameSpace(id: number, name: string): Promise<void> {
-  await db.spaces.update(id, { name, updatedAt: Date.now() });
+  await db.spaces.update(id, { name, status: 'user', updatedAt: Date.now() });
+}
+
+export async function deleteSpace(id: number): Promise<void> {
+  await db.spaces.delete(id);
 }
 
 export function addSpaceUrl(spaceUrl: Omit<SpaceUrl, 'id'>): Promise<number | undefined> {
@@ -138,6 +149,11 @@ export async function moveSpaceUrl(spaceUrlId: number, toSpaceId: number): Promi
 
 export async function setSpaceUrlAlwaysOpen(spaceUrlId: number, alwaysOpen: boolean): Promise<void> {
   await db.spaceUrls.update(spaceUrlId, { alwaysOpen, source: 'user' });
+}
+
+/** Most recent event of `kind` strictly before `ts` — the activation that started a stay already in progress. */
+export function getLastEventOfKindBefore(kind: EventKind, ts: number): Promise<CadenceEvent | undefined> {
+  return db.events.where('[kind+ts]').between([kind, 0], [kind, ts], true, false).last();
 }
 
 export async function removeSpaceUrl(spaceUrlId: number): Promise<void> {
@@ -155,4 +171,20 @@ export async function getLatestShelfForSpace(spaceId: number): Promise<Shelf | u
 
 export async function deleteShelf(id: number): Promise<void> {
   await db.shelves.delete(id);
+}
+
+export function getFlipPairs(): Promise<FlipPair[]> {
+  return db.flipPairs.toArray();
+}
+
+export function getFlipPair(writingUrl: string, referenceUrl: string): Promise<FlipPair | undefined> {
+  return db.flipPairs.where('[writingUrl+referenceUrl]').equals([writingUrl, referenceUrl]).first();
+}
+
+export function putFlipPair(pair: FlipPair): Promise<number | undefined> {
+  return db.flipPairs.put(pair);
+}
+
+export async function deleteFlipPair(id: number): Promise<void> {
+  await db.flipPairs.delete(id);
 }

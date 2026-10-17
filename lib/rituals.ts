@@ -1,4 +1,5 @@
 import { db, getEvents, getRitualBySeriesKey, putRitual } from './db';
+import { markProgrammaticNav } from './programmatic';
 import type { CalendarSource } from './calendar';
 import type { CalendarEvent, Ritual, RitualUrl } from './types';
 
@@ -31,6 +32,7 @@ async function collectUrlsNearOccurrence(
   const results: { url: string; title?: string }[] = [];
   for (const e of events) {
     if (e.kind !== 'tab_activated' && e.kind !== 'tab_opened' && e.kind !== 'navigated') continue;
+    if (e.programmatic) continue; // Cadence-initiated switches are not the user's behaviour
     if (!e.url || isExcludedFromRitual(e.url)) continue;
     results.push({ url: e.url, title: e.title });
   }
@@ -149,6 +151,7 @@ export async function openRitualDocs(ritual: Ritual): Promise<void> {
 
   const groupId = await chrome.tabs.group({ tabIds: [firstTabId, ...tabIds.slice(1)] });
   await chrome.tabGroups.update(groupId, { title: ritual.title, collapsed: false });
+  await markProgrammaticNav(firstTabId);
   await chrome.tabs.update(firstTabId, { active: true });
   const tab = await chrome.tabs.get(firstTabId);
   if (tab.windowId !== undefined) {

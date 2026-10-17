@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getEvents } from '@/lib/db';
+import { FocusFlipSection } from './components/FocusFlipSection';
+import { LeaderKeysSection } from './components/LeaderKeysSection';
+import { PrivacySettings } from './components/PrivacySettings';
 import { Header } from './components/Header';
 import { RitualsTab } from './components/RitualsTab';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SpacesTab } from './components/SpacesTab';
+import { StandupTab } from './components/StandupTab';
 import { Tabs, type TabName } from './components/Tabs';
 
 function startOfToday(): number {
@@ -62,8 +66,15 @@ export default function App() {
       <main className="content">
         {tab === 'Rituals' && <RitualsTab />}
         {tab === 'Spaces' && <SpacesTab />}
-        {tab !== 'Rituals' && tab !== 'Spaces' && <div className="coming-soon">{tab} — coming soon</div>}
+        {tab === 'Standup' && <StandupTab />}
+        {tab !== 'Rituals' && tab !== 'Spaces' && tab !== 'Standup' && <div className="coming-soon">{tab} — coming soon</div>}
       </main>
+
+      <FocusFlipSection />
+
+      <LeaderKeysSection />
+
+      <PrivacySettings />
 
       <SettingsPanel
         calendarSource={calendarSource}

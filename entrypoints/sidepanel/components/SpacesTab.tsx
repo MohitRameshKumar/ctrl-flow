@@ -13,6 +13,7 @@ import {
   type PendingSwitchSuggestion,
 } from '@/lib/spaces';
 import type { Space, SpaceUrl } from '@/lib/types';
+import { SpaceLetterControl } from './SpaceLetterControl';
 import { SuggestionCard } from './SuggestionCard';
 
 interface SpaceWithUrls extends Space {
@@ -86,6 +87,8 @@ function SpaceCard({
         <SpaceNameInput space={space} onRename={rename} />
         <span className="space-status">{statusLabel(space.status)}</span>
       </div>
+
+      <SpaceLetterControl spaceId={spaceId} name={space.name} />
 
       {space.urls.length === 0 ? (
         <div className="ritual-empty">No tabs yet.</div>

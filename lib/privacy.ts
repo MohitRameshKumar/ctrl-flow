@@ -11,6 +11,13 @@ export const DEFAULT_BLOCKLIST: BlocklistConfig = {
     'outlook.live.com',
     'outlook.office.com',
     'accounts.google.com',
+    // Password managers (PRIV-7): on by default.
+    '1password.com',
+    'bitwarden.com',
+    'lastpass.com',
+    'dashlane.com',
+    'keepersecurity.com',
+    'nordpass.com',
   ],
   substrings: ['mychart'],
 };
@@ -51,4 +58,19 @@ export function isSensitiveField(
   if (fieldName && SENSITIVE_RE.test(fieldName)) return true;
 
   return false;
+}
+
+/** "https://www.Chase.com/login" -> "chase.com". Returns null for anything that isn't a plausible hostname. */
+export function normalizeDomainInput(input: string): string | null {
+  let host = input.trim().toLowerCase();
+  if (!host) return null;
+  host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split(/[/?#]/)[0] ?? '';
+  host = host.replace(/^www\./, '').replace(/:\d+$/, '').replace(/\.$/, '');
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host) ? host : null;
+}
+
+/** Adds the current default domains to a stored blocklist without touching the user's own entries. */
+export function mergeDefaultDomains(stored: BlocklistConfig): BlocklistConfig {
+  const have = new Set(stored.domains.map((d) => d.toLowerCase()));
+  return { ...stored, domains: [...stored.domains, ...DEFAULT_BLOCKLIST.domains.filter((d) => !have.has(d))] };
 }

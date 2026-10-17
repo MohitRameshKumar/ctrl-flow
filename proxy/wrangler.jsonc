@@ -7,6 +7,12 @@
     // The extension's chrome-extension:// origin. CORS only allows this exact origin.
     // Compute it from the public key in wxt.config.ts (see scripts/gen-key.sh), e.g.
     // "chrome-extension://likggcapbkekeffagciamplbcmcobfcd"
-    "ALLOWED_ORIGIN": "chrome-extension://REPLACE_WITH_EXTENSION_ID"
+    "ALLOWED_ORIGIN": "chrome-extension://likggcapbkekeffagciamplbcmcobfcd",
+    // Model IDs live here, not in code. FAST_MODEL: structured tasks. WRITING_MODEL: standup + coverage doc.
+    "FAST_MODEL": "claude-haiku-5-5",
+    "WRITING_MODEL": "claude-sonnet-5-5",
+    // "claude" (default) or "gemini". Gemini also needs the GEMINI_API_KEY secret (wrangler secret put GEMINI_API_KEY).
+    "LLM_PROVIDER": "claude",
+    "GEMINI_MODEL": "gemini-2.5-flash"
   }
 }
