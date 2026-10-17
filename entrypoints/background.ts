@@ -43,7 +43,7 @@ import {
   handleUserActivation,
   resumeFlipIfDue,
 } from '@/lib/focus-flip';
-import { openLeader, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
+import { handleLeaderCommand, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
 import type { BlocklistConfig, CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
@@ -455,7 +455,7 @@ export default defineBackground(() => {
   // One listener for both commands: the leader key and the macro palette.
   chrome.commands.onCommand.addListener((command, tab) => {
     if (command === 'leader-key') {
-      openLeader(tab).catch((err) => console.error('[cadence] leader key failed', err));
+      handleLeaderCommand(tab); // synchronous up to sidePanel.open(): see lib/leader.ts
       return;
     }
     if (command !== MACRO_PALETTE_COMMAND) return;

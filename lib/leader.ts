@@ -4,6 +4,7 @@ import { getMacros, getRituals, getSpaces } from './db';
 import { cancelFlip } from './focus-flip';
 import {
   buildMenu,
+  canHostOverlay,
   effectiveLetter,
   findMenuItem,
   listRegistrations,
@@ -29,21 +30,27 @@ export const MACRO_LETTERS_KEY = 'macroLetters';
 /** Set when the leader key had to fall back to the side panel; the panel highlights the letter list. */
 export const LEADER_PANEL_KEY = 'leaderPanelAt';
 
-async function openSidePanel(ctx: LeaderContext): Promise<void> {
-  if (ctx.tabId !== undefined) await chrome.sidePanel.open({ tabId: ctx.tabId });
-  else if (ctx.windowId !== undefined) await chrome.sidePanel.open({ windowId: ctx.windowId });
-  else {
-    const win = await chrome.windows.getLastFocused();
-    if (win.id !== undefined) await chrome.sidePanel.open({ windowId: win.id });
-  }
-}
-
 let builtinsRegistered = false;
 /** Idempotent. Features that want a letter call `registerLeader` from lib/hotkeys.ts themselves. */
 export function registerBuiltinLeaders(): void {
   if (builtinsRegistered) return;
   builtinsRegistered = true;
-  registerLeader({ id: 'open_panel', letter: 'e', label: 'Open side panel', run: openSidePanel });
+  // chrome.sidePanel.open() needs a user gesture that a letter relayed from the overlay does not carry
+  // (the overlay itself shows "Click the Cadence icon"). This run() only matters from non-overlay
+  // callers, which get the same instruction as a notification.
+  registerLeader({
+    id: 'open_panel',
+    letter: 'e',
+    label: 'Open side panel (click the icon)',
+    run: async () => {
+      await chrome.notifications.create(`cadence-leader:panel-${Date.now()}`, {
+        type: 'basic',
+        iconUrl: '/icon/128.png',
+        title: 'Cadence',
+        message: 'Click the Cadence icon in the toolbar to open the panel.',
+      });
+    },
+  });
   registerLeader({
     id: 'stop',
     letter: 's',
@@ -67,7 +74,7 @@ export function registerBuiltinLeaders(): void {
     },
   });
   // Handled inside the overlay (it switches to a search list); a no-op if run from elsewhere.
-  registerLeader({ id: 'search', letter: '/', label: 'Search spaces & rituals', run: () => undefined });
+  registerLeader({ id: 'search', letter: '/', label: 'Search spaces, rituals & macros', run: () => undefined });
 }
 
 export async function getLetterOverrides(): Promise<Record<string, string>> {
@@ -163,10 +170,14 @@ export async function getMenu(): Promise<MenuItem[]> {
 }
 
 export async function getSearchItems(): Promise<SearchItem[]> {
-  const [spaces, rituals] = await Promise.all([getSpaces(), getRituals()]);
+  const [spaces, rituals, macros] = await Promise.all([getSpaces(), getRituals(), getMacros()]);
   return [
     ...spaces.flatMap((s) => (s.id !== undefined ? [{ kind: 'space' as const, id: s.id, label: s.name }] : [])),
     ...rituals.flatMap((r) => (r.id !== undefined && r.status !== 'never' ? [{ kind: 'ritual' as const, id: r.id, label: r.title }] : [])),
+    // Reachable here so the macro palette needs no shortcut of its own.
+    ...macros.flatMap((m) =>
+      m.id !== undefined && (m.status === 'accepted' || m.status === 'auto') ? [{ kind: 'macro' as const, id: m.id, label: `Macro: ${m.name}` }] : [],
+    ),
   ];
 }
 
@@ -188,7 +199,11 @@ export async function runLeaderLetter(letter: string, ctx: LeaderContext): Promi
   return true;
 }
 
-export async function runSearchItem(kind: 'space' | 'ritual', id: number): Promise<void> {
+export async function runSearchItem(kind: 'space' | 'ritual' | 'macro', id: number): Promise<void> {
+  if (kind === 'macro') {
+    await runMacro(id);
+    return;
+  }
   if (kind === 'space') {
     await switchToSpace(id);
     return;
@@ -198,23 +213,65 @@ export async function runSearchItem(kind: 'space' | 'ritual', id: number): Promi
 }
 
 /**
- * The leader shortcut was pressed. Shows the overlay in the page; on pages where content scripts
- * can't run (chrome://, the Web Store, the new-tab page) opens the side panel with the letter list.
+ * Opens the side panel straight from the shortcut's user gesture. Everything before the `open()`
+ * call is synchronous: a single `await` first (a DB read, a message round-trip) spends the gesture
+ * and Chrome throws "sidePanel.open() may only be called in response to a user gesture".
  */
-export async function openLeader(tab?: chrome.tabs.Tab): Promise<'overlay' | 'panel'> {
-  const target = tab ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
-  const message: LeaderShowMessage = { type: 'leader_show', items: await getMenu(), search: await getSearchItems() };
-
-  if (target?.id !== undefined) {
-    try {
-      await chrome.tabs.sendMessage(target.id, message, { frameId: 0 });
-      return 'overlay';
-    } catch {
-      // no content script in this tab: fall through to the panel
-    }
+function openPanelInGesture(tab?: chrome.tabs.Tab): void {
+  const opening =
+    tab?.id !== undefined
+      ? chrome.sidePanel.open({ tabId: tab.id })
+      : tab?.windowId !== undefined
+        ? chrome.sidePanel.open({ windowId: tab.windowId })
+        : null;
+  if (!opening) {
+    console.warn('[cadence] leader key fired with no tab to open the panel on');
+    return;
   }
+  opening.catch((err) => console.error('[cadence] sidePanel.open failed', err));
+  chrome.storage.session.set({ [LEADER_PANEL_KEY]: Date.now() }).catch(() => undefined);
+}
 
-  await chrome.storage.session.set({ [LEADER_PANEL_KEY]: Date.now() });
-  await openSidePanel({ tabId: target?.id, windowId: target?.windowId });
-  return 'panel';
+async function notifyLeaderUnavailable(): Promise<void> {
+  await chrome.notifications
+    .create(`cadence-leader:unavailable-${Date.now()}`, {
+      type: 'basic',
+      iconUrl: '/icon/128.png',
+      title: 'Leader key unavailable on this page',
+      message: 'Reload the tab and try again, or click the Cadence icon.',
+    })
+    .catch(() => undefined);
+}
+
+/** Shows the overlay; if the page's content script is missing or stale, injects it once and retries. */
+async function showOverlay(tab: chrome.tabs.Tab & { id: number }): Promise<void> {
+  const message: LeaderShowMessage = { type: 'leader_show', items: await getMenu(), search: await getSearchItems() };
+  const send = () => chrome.tabs.sendMessage(tab.id, message, { frameId: 0 });
+  try {
+    await send();
+    return;
+  } catch {
+    // no listener: the tab predates this build of the extension, or the script was orphaned by a reload
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content-scripts/leader.js'] });
+    await send();
+  } catch (err) {
+    // Deliberately no sidePanel.open() here: the gesture is long gone after these awaits.
+    console.warn('[cadence] leader overlay could not be shown', err);
+    await notifyLeaderUnavailable();
+  }
+}
+
+/**
+ * The leader shortcut was pressed (call synchronously from `commands.onCommand`). The overlay-or-panel
+ * decision is made from `tab.url` alone, so the panel opens inside the gesture when the page can't
+ * host the overlay (chrome://, the Web Store, the new-tab page).
+ */
+export function handleLeaderCommand(tab?: chrome.tabs.Tab): void {
+  if (!tab || tab.id === undefined || !canHostOverlay(tab.url)) {
+    openPanelInGesture(tab);
+    return;
+  }
+  showOverlay({ ...tab, id: tab.id }).catch((err) => console.error('[cadence] leader key failed', err));
 }

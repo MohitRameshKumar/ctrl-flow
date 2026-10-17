@@ -44,7 +44,7 @@ export type ContentMessage =
   | { type: 'sensitive_focus'; value: boolean }
   /** Leader-key overlay (or the panel fallback) asking the background to run a letter / a search result. */
   | { type: 'leader_run'; letter: string }
-  | { type: 'leader_run_item'; kind: 'space' | 'ritual'; id: number };
+  | { type: 'leader_run_item'; kind: 'space' | 'ritual' | 'macro'; id: number };
 
 /** A learned (writing tab, reference tab) pair for Focus Flip. Counts and durations only. */
 export interface FlipPair {

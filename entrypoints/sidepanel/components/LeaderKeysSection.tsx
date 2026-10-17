@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { LEADER_COMMAND } from '@/lib/shortcuts';
+import { ShortcutLabel } from './ShortcutLabel';
 import { listRegistrations, type MenuItem, type SearchItem } from '@/lib/hotkeys';
 import {
   LEADER_PANEL_KEY,
@@ -67,7 +69,8 @@ export function LeaderKeysSection() {
     <section className={fallback ? 'settings leader-keys leader-fallback' : 'settings leader-keys'}>
       <h3>Leader keys</h3>
       <div className="doc-seen">
-        Press the Cadence shortcut (Ctrl+Shift+Space, ⌘⇧Space on Mac; change it at chrome://extensions/shortcuts), then a letter.
+        Press the Cadence shortcut <ShortcutLabel command={LEADER_COMMAND} />, then a letter. Change it at
+        chrome://extensions/shortcuts.
       </div>
       {fallback && <div className="notice">This page can&apos;t show the overlay. Click a letter below or type it.</div>}
 
@@ -84,7 +87,7 @@ export function LeaderKeysSection() {
 
       {fallback && (
         <div className="leader-search">
-          <input placeholder="Search spaces & rituals…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input placeholder="Search spaces, rituals & macros…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {matches.map((s) => (
             <button
               key={`${s.kind}-${s.id}`}

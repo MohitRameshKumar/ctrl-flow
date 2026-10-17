@@ -1,6 +1,7 @@
 // Leader-key overlay (HOT-3). Lives in a closed-off shadow DOM so no page style leaks in or out,
 // closes after 2 s or on Esc, and never lets its own keystrokes reach the collector: while open it
 // sets a flag the main content script checks, and it swallows keys before the page sees them.
+import { createContentGuard } from '@/lib/content-guard';
 import type { LeaderShowMessage, MenuItem, SearchItem } from '@/lib/hotkeys';
 import type { ContentMessage } from '@/lib/types';
 
@@ -27,8 +28,15 @@ function setFlag(open: boolean): void {
   (globalThis as unknown as Record<string, boolean>)[OPEN_FLAG] = open;
 }
 
+const guard = createContentGuard();
+
 function send(message: ContentMessage): void {
-  chrome.runtime.sendMessage(message).catch(() => undefined);
+  if (!guard.alive()) return;
+  try {
+    chrome.runtime.sendMessage(message).catch(() => undefined);
+  } catch {
+    guard.teardown(); // "Extension context invalidated" is thrown synchronously
+  }
 }
 
 function escapeText(s: string): string {
@@ -87,7 +95,7 @@ export default defineContentScript({
       const list = matches();
       selected = Math.min(selected, Math.max(0, list.length - 1));
       box.innerHTML =
-        `<div class="title">Search spaces &amp; rituals</div><input id="q" placeholder="Type to filter…" value="${escapeText(query)}" />` +
+        `<div class="title">Search spaces, rituals &amp; macros</div><input id="q" placeholder="Type to filter…" value="${escapeText(query)}" />` +
         (list.length === 0
           ? `<div class="row soon">No matches</div>`
           : list
@@ -144,8 +152,21 @@ export default defineContentScript({
         renderSearch();
         return;
       }
+      if (item.id === 'open_panel') {
+        // chrome.sidePanel.open() needs a user gesture, which a key press relayed through the
+        // background does not carry. The toolbar icon is set to open the panel on click, so point there.
+        showNotice('Click the Cadence icon in the toolbar to open the panel.');
+        return;
+      }
       send({ type: 'leader_run', letter: item.letter });
       close();
+    }
+
+    function showNotice(text: string): void {
+      if (!box) return;
+      box.innerHTML = `<div class="title">Cadence</div><div class="row">${escapeText(text)}</div>`;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(close, 3500);
     }
 
     function show(message: LeaderShowMessage): void {
@@ -172,8 +193,18 @@ export default defineContentScript({
       timer = setTimeout(close, CLOSE_AFTER_MS);
     }
 
-    chrome.runtime.onMessage.addListener((message: unknown) => {
-      if ((message as LeaderShowMessage | undefined)?.type === 'leader_show') show(message as LeaderShowMessage);
-    });
+    try {
+      const onMessage = (message: unknown) => {
+        if (!guard.alive()) return;
+        if ((message as LeaderShowMessage | undefined)?.type === 'leader_show') show(message as LeaderShowMessage);
+      };
+      chrome.runtime.onMessage.addListener(onMessage);
+      guard.onTeardown(() => {
+        chrome.runtime.onMessage.removeListener(onMessage);
+        close();
+      });
+    } catch {
+      guard.teardown();
+    }
   },
 });

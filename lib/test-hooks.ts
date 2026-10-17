@@ -2,7 +2,8 @@ import { setDemoCalendarEvents } from './calendar';
 import { db } from './db';
 import { getLastAiRequest } from './ai';
 import { setFocusProbeForTests } from './focus-flip';
-import { openLeader } from './leader';
+import { canHostOverlay } from './hotkeys';
+import { handleLeaderCommand } from './leader';
 import { routeNotificationButtonClicked } from './notifications';
 import type { CadenceEvent, CalendarEvent } from './types';
 
@@ -47,7 +48,9 @@ export function installTestHooks(fireAlarmImpl: (name: string) => Promise<void>)
       await Promise.all(TABLE_NAMES.map((name) => db.table(name).clear()));
     },
     async triggerLeader() {
-      return openLeader();
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      handleLeaderCommand(tab);
+      return canHostOverlay(tab?.url) ? 'overlay' : 'panel';
     },
     async seedTable(name, rows) {
       await db.table(name).bulkAdd(rows);

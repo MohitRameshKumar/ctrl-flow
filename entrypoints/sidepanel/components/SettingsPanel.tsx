@@ -58,7 +58,7 @@ export function SettingsPanel({
 
   return (
     <section className="settings">
-      <h3>Settings</h3>
+      <h3>General</h3>
 
       <label className="settings-row">
         <span>Calendar source</span>
