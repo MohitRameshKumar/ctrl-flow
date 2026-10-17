@@ -11,14 +11,12 @@ export default defineConfig({
     // Leader key. `Ctrl` becomes ⌘ on macOS (Ctrl+Alt combos are not allowed by Chrome).
     commands: {
       'leader-key': {
-        suggested_key: { default: 'Ctrl+Shift+Space', mac: 'Command+Shift+Space' },
+        suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
         description: 'Cadence: open the leader-key menu',
       },
-      // Ctrl+Shift+K/Y are free in Chrome (it reserves Shift+T/N/W/Q/I/J/A/B/M/O/Delete), and
-      // Ctrl+K belongs to the omnibox. Chrome silently leaves the command unbound if another
-      // extension already holds this, so the Macros tab shows the live binding.
+      // No default binding: the palette is reachable via leader → / (search includes macros), and
+      // the Macros tab shows "Set a shortcut" if the user wants a direct key.
       'open-macro-palette': {
-        suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
         description: 'Cadence: open the macro palette',
       },
     },
