@@ -20,6 +20,7 @@ import {
   MACRO_SIMILARITY,
   MACRO_URL_FLOOR,
 } from './constants';
+import { isTransientUrl, knownAppName } from './sites';
 import type {
   CadenceEvent,
   Macro,
@@ -44,6 +45,8 @@ import type {
  */
 export function eventToAction(e: CadenceEvent): ObservedAction | null {
   if (!e.url) return null;
+  // Search results and sign-in hops are where you were *on the way* to somewhere: never a step.
+  if (isTransientUrl(e.url)) return null;
   // Cadence-side filters. `synthetic` is simulated data; `programmatic` is a switch Cadence itself
   // made (ritual docs, space restore, Focus Flip, macro replay). Neither is the user's behaviour,
   // so neither may be learned as a routine.
@@ -1084,6 +1087,11 @@ export function prettyDomain(host: string): string {
   return BRAND_BY_LABEL[label] ?? label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+/** What a page is called to people: the app ("Gmail", "Google Docs") when known, else the pretty domain. */
+export function appLabel(url: string): string {
+  return knownAppName(url) ?? prettyDomain(domainOf(url) ?? url);
+}
+
 export function hourBucket(hour: number): string {
   if (hour < 11) return 'Morning';
   if (hour < 14) return 'Midday';
@@ -1099,12 +1107,12 @@ export function nameMacro(candidate: MacroCandidate, fallbackIndex: number, take
   const counts = new Map<string, number>();
   for (const step of candidate.steps) {
     if (step.kind !== 'open_url') continue;
-    const domain = domainOf(step.url);
-    if (!domain) continue;
-    counts.set(domain, (counts.get(domain) ?? 0) + 1);
+    if (!domainOf(step.url)) continue;
+    const label = appLabel(step.url);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
   }
 
-  const pretty = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([d]) => prettyDomain(d));
+  const pretty = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([label]) => label);
   const unique = [...new Set(pretty)];
 
   let base: string;

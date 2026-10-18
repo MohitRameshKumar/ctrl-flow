@@ -154,6 +154,12 @@ h4 {
   background: var(--warn);
 }
 
+/* An excluded site: a hollow grey ring, distinct from recording (green) and paused (amber). */
+.rec.excluded .rec-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--ink-3);
+}
+
 .tabs {
   display: flex;
   gap: 0;
@@ -520,6 +526,26 @@ button.keycap:hover:not(:disabled) {
 
 .mrow.highlight {
   border-color: var(--accent);
+}
+
+/* A just-saved macro: one soft flash, then it settles. */
+.mrow.fresh {
+  animation: fresh-flash 2.4s ease-out 1;
+}
+
+@keyframes fresh-flash {
+  0%,
+  35% {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mrow.fresh {
+    animation: none;
+    border-color: var(--accent);
+  }
 }
 
 .row-line {
@@ -1155,6 +1181,18 @@ button.keycap:hover:not(:disabled) {
   flex: 1;
 }
 
+.excluded-mode {
+  font-size: var(--t-sm);
+  max-width: 110px;
+}
+
+.excluded-list li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .last-ai-request {
   margin-top: var(--s1);
 }
@@ -1319,4 +1357,45 @@ button.keycap:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Outbound history: one line per call, click to expand. */
+.outbound-list {
+  list-style: none;
+  margin: var(--s1) 0 0;
+  padding: 0;
+}
+
+.outbound-row {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: var(--t-sm);
+}
+
+.outbound-row:focus-visible {
+  box-shadow: var(--focus);
+  border-radius: var(--r-chip);
+}
+
+.outbound-time {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.outbound-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-settings {
+  margin-top: var(--s2);
 }

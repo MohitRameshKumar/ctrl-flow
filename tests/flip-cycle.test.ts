@@ -194,8 +194,10 @@ describe('activity-then-idle (createIdleTracker)', () => {
     t.clear();
     vi.advanceTimersByTime(10_000);
     expect(idles()).toHaveLength(0);
-    t.activity('key'); // ignored while off
-    expect(sent.filter((m) => m.type === 'activity')).toHaveLength(1); // only the one from before
+    t.activity('key'); // off: a detection-only ping, never a timer or an idle
+    expect(sent.filter((m) => m.type === 'activity')).toHaveLength(2);
+    vi.advanceTimersByTime(10_000);
+    expect(idles()).toHaveLength(0);
   });
 
   it('even without clear(), an idle that fires after the toggle went off is dropped', () => {

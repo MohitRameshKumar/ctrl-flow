@@ -13,8 +13,9 @@
 import { runTask } from './ai';
 import { db } from './db';
 import { recordOutbound } from './outbound-log';
+import { exclusionMode, getBlocklist } from './privacy';
 import { getCloudSyncEnabled } from './settings';
-import type { CadenceEvent } from './types';
+import type { BlocklistConfig, CadenceEvent } from './types';
 
 const DEVICE_ID_KEY = 'deviceId';
 const STATE_KEY = 'cloudSyncState';
@@ -99,16 +100,22 @@ export async function resetCloudSyncState(): Promise<void> {
  * Returns null for rows that must not be mirrored: synthetic events (written by the debug page's
  * "Simulate") would pollute a real time-series, and a row with no id cannot take part in the
  * high-water mark.
+ *
+ * With a blocklist, the exclusion rules are re-applied at send time (a site may have been excluded
+ * after the event was stored): a "never record" domain sends nothing, and a "visit only" domain
+ * sends its bare domain with no title.
  */
-export function toRow(event: CadenceEvent): ActivityRow | null {
+export function toRow(event: CadenceEvent, blocklist?: BlocklistConfig): ActivityRow | null {
   if (event.synthetic === true) return null;
   if (typeof event.id !== 'number') return null;
+  const mode = blocklist && event.domain ? exclusionMode(event.domain, blocklist) : null;
+  if (mode === 'never') return null;
   return {
     localId: event.id,
     ts: event.ts,
     kind: event.kind,
     domain: event.domain ?? '',
-    title: (event.title ?? '').slice(0, MAX_TITLE_CHARS),
+    title: mode === 'visit-only' ? '' : (event.title ?? '').slice(0, MAX_TITLE_CHARS),
   };
 }
 
@@ -132,6 +139,7 @@ export async function syncEvents(): Promise<SyncOutcome> {
   if (!(await getCloudSyncEnabled())) return { ok: true, sent: 0, inserted: 0, skipped: true };
 
   const deviceId = await getDeviceId();
+  const blocklist = await getBlocklist();
   let { lastSyncedEventId } = await getCloudSyncState();
   let sent = 0;
   let inserted = 0;
@@ -146,7 +154,7 @@ export async function syncEvents(): Promise<SyncOutcome> {
     // run of synthetic events at the head would stall the sync forever.
     const highestId = events.reduce((max, e) => Math.max(max, e.id ?? 0), lastSyncedEventId);
     const rows = events.flatMap((e) => {
-      const row = toRow(e);
+      const row = toRow(e, blocklist);
       return row ? [row] : [];
     });
 

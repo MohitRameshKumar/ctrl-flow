@@ -1,4 +1,4 @@
-import { updateBadge } from '@/lib/badge';
+import { updateBadge, updateBadgeForTab } from '@/lib/badge';
 import { createCalendarSource } from '@/lib/calendar';
 import { MACRO_LOOKBACK_MS } from '@/lib/constants';
 import { checkPaperLookup } from '@/lib/find-pdf-command';
@@ -9,11 +9,13 @@ import { normalizeUrl } from '@/lib/normalize';
 import { routeNotificationButtonClicked } from '@/lib/notifications';
 import {
   DEFAULT_BLOCKLIST,
+  decideExclusion,
   getBlocklist,
   isBlocklisted,
   isPaused,
   isSensitiveField,
   mergeDefaultDomains,
+  migrateEmailToVisitOnly,
 } from '@/lib/privacy';
 import { isReplayInProgress } from '@/lib/macro-run-channel';
 import { reconcileAbandonedRun } from '@/lib/macro-replay';
@@ -46,7 +48,7 @@ import {
   handleUserActivation,
 } from '@/lib/focus-flip';
 import { cancelRepeat, confirmRepeat, runMacroSlot } from '@/lib/macro-leaders';
-import { handleLeaderCommand, registerBuiltinLeaders, syncLetters, runLeaderLetter, runSearchItem } from '@/lib/leader';
+import { handleLeaderCommand, registerBuiltinLeaders, setMacroLetter, syncLetters, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
 import type { BlocklistConfig, CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
@@ -125,23 +127,29 @@ const KINDS_REQUIRING_URL = new Set<EventKind>([
   'download',
 ]);
 
-function isDuplicate(kind: EventKind, url: string | undefined, tabId: number | undefined): boolean {
+/** A visit-only root has no page changes to tell apart, so repeated visits to it collapse over a longer window. */
+const VISIT_ONLY_DEDUPE_MS = 5 * 60 * 1000;
+
+function isDuplicate(kind: EventKind, url: string | undefined, tabId: number | undefined, visitOnly = false): boolean {
   if (!url) return false;
   if (kind !== 'tab_opened' && kind !== 'navigated' && kind !== 'tab_activated') return false;
 
   const key = `nav|${tabId ?? '?'}|${url}`;
   const now = Date.now();
   const last = recentWrites.get(key);
+  const window = visitOnly ? VISIT_ONLY_DEDUPE_MS : DEDUPE_WINDOW_MS;
 
   // Opportunistic sweep: this map is only ever as big as recent navigation activity.
   if (recentWrites.size > 200) {
     for (const [k, ts] of recentWrites) {
-      if (now - ts > DEDUPE_WINDOW_MS) recentWrites.delete(k);
+      if (now - ts > VISIT_ONLY_DEDUPE_MS) recentWrites.delete(k);
     }
   }
 
+  // Not refreshed on a duplicate for visit-only, so the window ends 5 minutes after the *recorded* visit.
+  if (visitOnly && last !== undefined && now - last < window) return true;
   recentWrites.set(key, now);
-  return last !== undefined && now - last < DEDUPE_WINDOW_MS;
+  return last !== undefined && now - last < window;
 }
 
 /** The only path that reaches db.events.add. Applies pause/blocklist/normalization uniformly for every event source. */
@@ -156,6 +164,8 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
 
   let url: string | undefined;
   let domain: string | undefined;
+  /** Set on a "visit only" site: only the root URL is kept, so everything else on the input is dropped. */
+  let visitOnly = false;
 
   if (input.rawUrl) {
     const normalized = normalizeUrl(input.rawUrl);
@@ -165,8 +175,14 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     if (!normalized) return;
 
     domain = normalized.domain;
-    if (isBlocklisted(domain, blocklist)) return;
-    url = normalized.url;
+    const decision = decideExclusion(input.kind, domain, blocklist, { spa: input.spa });
+    if (decision.action === 'drop') return;
+    if (decision.action === 'root') {
+      visitOnly = true;
+      url = decision.url;
+    } else {
+      url = normalized.url;
+    }
   } else if (KINDS_REQUIRING_URL.has(input.kind)) {
     // The guard above only fires when a URL was supplied at all. A tab activated while still
     // loading reports `url: ''`, which skipped the block entirely and wrote a row carrying
@@ -181,8 +197,9 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     if (frame && isBlocklisted(frame.domain, blocklist)) return;
   }
 
-  if (isDuplicate(input.kind, url, input.tabId)) return;
+  if (isDuplicate(input.kind, url, input.tabId, visitOnly)) return;
 
+  // A visit-only site keeps nothing but the root URL and domain: no title, path, click, field or typing data.
   const event: CadenceEvent = {
     ts: Date.now(),
     kind: input.kind,
@@ -190,17 +207,17 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     windowId: input.windowId,
     url,
     domain,
-    title: input.title,
-    selector: input.selector,
-    label: input.label,
-    fieldName: input.fieldName,
-    keyCount: input.keyCount,
+    title: visitOnly ? undefined : input.title,
+    selector: visitOnly ? undefined : input.selector,
+    label: visitOnly ? undefined : input.label,
+    fieldName: visitOnly ? undefined : input.fieldName,
+    keyCount: visitOnly ? undefined : input.keyCount,
     programmatic: input.programmatic ? true : undefined,
-    spa: input.spa ? true : undefined,
+    spa: visitOnly ? undefined : input.spa ? true : undefined,
     // Only the flag survives: normalizeUrl strips the query, and the query text is never stored.
-    pdfSearch: input.kind === 'navigated' || input.kind === 'tab_opened' || input.kind === 'tab_activated' ? (isPdfSearchUrl(input.rawUrl) ? true : undefined) : undefined,
-    ext: input.ext,
-    mime: input.mime,
+    pdfSearch: visitOnly ? undefined : input.kind === 'navigated' || input.kind === 'tab_opened' || input.kind === 'tab_activated' ? (isPdfSearchUrl(input.rawUrl) ? true : undefined) : undefined,
+    ext: visitOnly ? undefined : input.ext,
+    mime: visitOnly ? undefined : input.mime,
   };
 
   await db.events.add(event);
@@ -249,6 +266,7 @@ function recordNavigation(tabId: number, url: string, spa = false): void {
     .get(tabId)
     .then((tab) => {
       rememberTabUrl(tabId, url, tab.title);
+      updateBadgeForTab(tabId, url).catch(() => undefined);
       return writeEvent({ kind: 'navigated', tabId, windowId: tab.windowId, rawUrl: url, title: tab.title, spa });
     })
     .catch(() => writeEvent({ kind: 'navigated', tabId, rawUrl: url, spa }))
@@ -283,7 +301,7 @@ async function seedActiveTabs(): Promise<void> {
 }
 
 async function initDefaults(): Promise<void> {
-  const existing = await chrome.storage.local.get(['paused', 'blocklist', 'calendarSource', 'demoMode', FOCUS_FLIP_KEY, RETENTION_KEY, 'blocklistDefaultsV2']);
+  const existing = await chrome.storage.local.get(['paused', 'blocklist', 'calendarSource', 'demoMode', FOCUS_FLIP_KEY, RETENTION_KEY, 'blocklistDefaultsV2', 'blocklistVisitOnlyV1']);
   const updates: Record<string, unknown> = {};
   if (existing.paused === undefined) updates.paused = false;
   if (existing.blocklist === undefined) updates.blocklist = DEFAULT_BLOCKLIST;
@@ -296,6 +314,12 @@ async function initDefaults(): Promise<void> {
     updates.blocklist = mergeDefaultDomains(existing.blocklist as BlocklistConfig);
   }
   if (existing.blocklistDefaultsV2 !== true) updates.blocklistDefaultsV2 = true;
+  // One-time: email moves from "never record" to "visit only" (the root URL, nothing else).
+  if (existing.blocklistVisitOnlyV1 !== true) {
+    const current = (updates.blocklist ?? existing.blocklist) as BlocklistConfig | undefined;
+    if (current) updates.blocklist = migrateEmailToVisitOnly(current);
+    updates.blocklistVisitOnlyV1 = true;
+  }
   if (Object.keys(updates).length > 0) {
     await chrome.storage.local.set(updates);
   }
@@ -384,8 +408,11 @@ async function handleContentMessage(
     case 'leader_run_item':
       await runSearchItem(message.kind, message.id);
       return;
+    case 'leader_assign_letter':
+      await setMacroLetter(message.macroId, message.letter);
+      return;
     case 'leader_repeat_confirm':
-      await confirmRepeat();
+      await confirmRepeat({ tabId: tab?.id, windowId: tab?.windowId });
       return;
     case 'leader_repeat_cancel':
       await cancelRepeat();
@@ -563,6 +590,7 @@ export default defineBackground(() => {
         // tabs that activate on their own, which no per-tab mark can anticipate, hence the flag.
         const programmatic = marked || replaying;
         rememberTabUrl(tabId, tab.url, tab.title);
+        updateBadgeForTab(tabId, tab.url).catch(() => undefined);
         await writeEvent({ kind: 'tab_activated', tabId, windowId, rawUrl: tab.url, title: tab.title, programmatic });
         if (programmatic) return;
         await handleUserActivation(tabId, tab.url);
@@ -616,8 +644,12 @@ export default defineBackground(() => {
     if (area === 'local' && changes[FOCUS_FLIP_KEY] && changes[FOCUS_FLIP_KEY].newValue !== true) {
       disableFocusFlip().catch((err) => console.error('[cadence] disabling focus flip failed', err));
     }
-    if (area === 'local' && changes.paused) {
-      updateBadge().catch((err) => console.error('[cadence] badge failed', err));
+    if (area === 'local' && (changes.paused || changes.blocklist)) {
+      chrome.tabs
+        .query({ active: true })
+        .then((tabs) => Promise.all(tabs.map((t) => (t.id !== undefined ? updateBadgeForTab(t.id, t.url) : undefined))))
+        .then(() => updateBadge())
+        .catch((err) => console.error('[cadence] badge failed', err));
     }
     if (area === 'local' && changes[RETENTION_KEY]) {
       purgeExpiredEvents().catch((err) => console.error('[cadence] retention purge failed', err));

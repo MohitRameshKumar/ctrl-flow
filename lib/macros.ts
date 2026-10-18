@@ -54,6 +54,7 @@ import { refineSegment } from './macro-repeat';
 import { dominatedSuggestions, visibleSuggestions } from './macro-suggestions';
 import { snoozeMs } from './macro-thresholds';
 import { normalizeUrl } from './normalize';
+import { allowNotification } from './notify';
 import { chromeActionSource } from './macro-source';
 import { getAutoRunEnabled, getDemoMode, getRunMode, getRunSpeed } from './settings';
 import type { Macro, MacroCandidate, MacroRunResult, ObservedAction, RunMode } from './types';
@@ -251,6 +252,8 @@ export async function offerTopSuggestedMacro(): Promise<void> {
 
   await recordOffer(macro.macroKey);
   if (await isSidePanelOpen()) return;
+  // Settings toggle and the 10-minute-per-type throttle (the macro's own snooze was applied above).
+  if (!(await allowNotification('macro-suggestion'))) return;
 
   const tabCount = macro.steps.filter((s) => s.kind === 'open_url').length;
   await chrome.notifications.create(`${MACRO_NOTIFICATION_PREFIX}${macro.id}`, {
@@ -260,7 +263,7 @@ export async function offerTopSuggestedMacro(): Promise<void> {
     message: `You've done this ${macro.occurrences} times. Save it as a macro (${tabCount} tab${
       tabCount === 1 ? '' : 's'
     })?`,
-    buttons: [{ title: 'Save and run' }, { title: 'Never' }],
+    buttons: [{ title: 'Save' }, { title: 'Not now' }],
   });
 }
 
@@ -289,10 +292,9 @@ export async function handleMacroNotificationButtonClicked(
   const macroId = Number(rest);
   if (!Number.isNaN(macroId)) {
     if (buttonIndex === 0) {
-      await updateMacroStatus(macroId, 'accepted');
-      await runMacro(macroId, { mode: 'silent' });
+      await updateMacroStatus(macroId, 'accepted'); // Save: it joins the Macros tab; running it is a separate choice
     } else {
-      await updateMacroStatus(macroId, 'never');
+      await notNowSuggestion(macroId); // Not now: snoozed, and back later (Never lives on the suggestion card)
     }
   }
   await chrome.notifications.clear(notificationId);

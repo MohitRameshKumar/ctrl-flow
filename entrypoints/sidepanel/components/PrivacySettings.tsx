@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { DEFAULT_BLOCKLIST, getBlocklist, normalizeDomainInput } from '@/lib/privacy';
 import { DEFAULT_RETENTION, RETENTION_KEY, RETENTION_OPTIONS, isRetentionSetting, type RetentionSetting } from '@/lib/retention';
-import type { BlocklistConfig } from '@/lib/types';
+import type { BlocklistConfig, ExclusionMode } from '@/lib/types';
 
 /** PRIV-5 retention and PRIV-7 excluded domains. */
 export function PrivacySettings() {
@@ -10,6 +10,7 @@ export function PrivacySettings() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [draftMode, setDraftMode] = useState<ExclusionMode>('never');
 
   const refresh = useCallback(async () => {
     const { [RETENTION_KEY]: r } = await chrome.storage.local.get<Record<string, unknown>>(RETENTION_KEY);
@@ -26,6 +27,19 @@ export function PrivacySettings() {
 
   const save = (next: BlocklistConfig) => chrome.storage.local.set({ blocklist: next });
 
+  const visitOnly = blocklist.visitOnly ?? [];
+  /** One row per excluded site, in either mode. "Never" wins if a site is somehow in both lists. */
+  const sites: { domain: string; mode: ExclusionMode }[] = [
+    ...blocklist.domains.map((domain) => ({ domain, mode: 'never' as const })),
+    ...visitOnly.filter((d) => !blocklist.domains.includes(d)).map((domain) => ({ domain, mode: 'visit-only' as const })),
+  ];
+
+  const place = (domain: string, mode: ExclusionMode): BlocklistConfig => ({
+    ...blocklist,
+    domains: mode === 'never' ? [...blocklist.domains.filter((d) => d !== domain), domain] : blocklist.domains.filter((d) => d !== domain),
+    visitOnly: mode === 'visit-only' ? [...visitOnly.filter((d) => d !== domain), domain] : visitOnly.filter((d) => d !== domain),
+  });
+
   const add = async () => {
     const domain = normalizeDomainInput(draft);
     if (!domain) {
@@ -33,11 +47,12 @@ export function PrivacySettings() {
       return;
     }
     setError('');
-    if (!blocklist.domains.includes(domain)) await save({ ...blocklist, domains: [...blocklist.domains, domain] });
+    if (!sites.some((s) => s.domain === domain)) await save(place(domain, draftMode));
     setDraft('');
   };
 
-  const remove = (domain: string) => save({ ...blocklist, domains: blocklist.domains.filter((d) => d !== domain) });
+  const remove = (domain: string) =>
+    save({ ...blocklist, domains: blocklist.domains.filter((d) => d !== domain), visitOnly: visitOnly.filter((d) => d !== domain) });
 
   return (
     <div className="settings-block privacy-settings">
@@ -59,20 +74,33 @@ export function PrivacySettings() {
         Older activity is deleted automatically; saved rituals, spaces and macros are kept. A short setting gives Rituals and Spaces less to learn from.
       </div>
 
-      <div className="sub-title">Never record these sites</div>
+      <div className="sub-title">Excluded sites</div>
+      <div className="hint">
+        <strong>Never record</strong> keeps nothing. <strong>Visit only</strong> notes that you opened the site (its front page, no title,
+        path, clicks or typing), so a macro can open it. Neither is sent anywhere beyond the bare domain.
+      </div>
       <ul className="excluded-list">
-        {(showAll ? blocklist.domains : blocklist.domains.slice(0, 3)).map((d) => (
-          <li key={d}>
-            <span>{d}</span>
-            <button className="btn btn-remove" onClick={() => remove(d)} aria-label={`Remove ${d}`}>
+        {(showAll ? sites : sites.slice(0, 4)).map(({ domain, mode }) => (
+          <li key={domain}>
+            <span>{domain}</span>
+            <select
+              className="excluded-mode"
+              value={mode}
+              aria-label={`How to treat ${domain}`}
+              onChange={(e) => save(place(domain, e.target.value as ExclusionMode))}
+            >
+              <option value="never">Never record</option>
+              <option value="visit-only">Visit only</option>
+            </select>
+            <button className="btn btn-remove" onClick={() => remove(domain)} aria-label={`Remove ${domain}`}>
               Remove
             </button>
           </li>
         ))}
       </ul>
-      {blocklist.domains.length > 3 && (
+      {sites.length > 4 && (
         <button className="btn-link self-start" onClick={() => setShowAll((v) => !v)}>
-          {showAll ? 'Show fewer' : `Show all ${blocklist.domains.length} sites`}
+          {showAll ? 'Show fewer' : `Show all ${sites.length} sites`}
         </button>
       )}
       <div className="settings-row">
@@ -84,6 +112,10 @@ export function PrivacySettings() {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />
+        <select className="excluded-mode" value={draftMode} aria-label="Mode for the new site" onChange={(e) => setDraftMode(e.target.value as ExclusionMode)}>
+          <option value="never">Never record</option>
+          <option value="visit-only">Visit only</option>
+        </select>
         <button className="btn sm" onClick={add}>
           Add
         </button>

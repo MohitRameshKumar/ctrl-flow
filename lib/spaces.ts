@@ -1,12 +1,15 @@
 import { runTask } from './ai';
 import {
   MAX_CONTEXT_URLS,
+  RECENT_CO_USAGE_MS,
+  STALE_TAB_MS,
   computePairStats,
   edgesForUrls,
   groupByCoUsage,
   pickContextUrls,
   truncateTitle,
   typedCountsForUrls,
+  urlsWithCoUsage,
   type PairStat,
 } from './co-usage';
 import {
@@ -25,6 +28,8 @@ import {
   removeSpaceUrl,
 } from './db';
 import { normalizeUrl } from './normalize';
+import { appLabel } from './macro-detection';
+import { isTransientUrl } from './sites';
 import { findOpenTabIdsForUrls, focusTab, openUrlsAsGroup } from './tabs';
 import { getBlocklist, isBlocklisted } from './privacy';
 import { checkForSwitch, neverSwitchForSpace, recordSwitchOffer, type SwitchCandidate } from './switch-detection';
@@ -42,9 +47,16 @@ export const SPACE_RECOMPUTE_ALARM = 'cadence-space-recompute';
 export const SWITCH_CHECK_ALARM = 'cadence-switch-check';
 const PENDING_SWITCH_KEY = 'pendingSwitchSuggestion';
 
+/** Edges sent to the AI look back this far; whether a tab *joins* a space looks at the last few hours only. */
 const ACTIVATION_WINDOW_MS = 48 * 60 * 60 * 1000;
 const RECENT_TYPING_WINDOW_MS = 2 * 60 * 1000;
 const MAX_CANDIDATES = 150;
+
+/** Not activated in the last 24 hours (Chrome's `lastAccessed`; tabs without it are kept). */
+function isStaleTab(tab: chrome.tabs.Tab, now: number): boolean {
+  const last = (tab as { lastAccessed?: number }).lastAccessed;
+  return typeof last === 'number' && now - last > STALE_TAB_MS;
+}
 
 export interface Candidate {
   url: string;
@@ -55,18 +67,18 @@ async function getCandidateUrls(): Promise<Candidate[]> {
   const blocklist = await getBlocklist();
   const candidates = new Map<string, Candidate>();
 
+  const now = Date.now();
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
-    if (!tab.url) continue;
+    if (!tab.url || isStaleTab(tab, now)) continue;
     const normalized = normalizeUrl(tab.url);
-    if (!normalized || isBlocklisted(normalized.domain, blocklist)) continue;
+    if (!normalized || isBlocklisted(normalized.domain, blocklist) || isTransientUrl(normalized.url)) continue;
     candidates.set(normalized.url, { url: normalized.url, title: tab.title });
   }
 
-  const now = Date.now();
-  const events = await getEventsByKind('tab_activated', now - ACTIVATION_WINDOW_MS, now);
+  const events = await getEventsByKind('tab_activated', now - STALE_TAB_MS, now);
   for (const e of events) {
-    if (!e.url || e.programmatic || candidates.has(e.url)) continue;
+    if (!e.url || e.programmatic || candidates.has(e.url) || isTransientUrl(e.url)) continue;
     candidates.set(e.url, { url: e.url, title: e.title });
   }
 
@@ -79,11 +91,12 @@ export async function getUnassignedOpenTabs(): Promise<Candidate[]> {
   const tabs = await chrome.tabs.query({});
   const seen = new Set<string>();
   const result: Candidate[] = [];
+  const now = Date.now();
 
   for (const tab of tabs) {
-    if (!tab.url) continue;
+    if (!tab.url || isStaleTab(tab, now)) continue;
     const normalized = normalizeUrl(tab.url);
-    if (!normalized || isBlocklisted(normalized.domain, blocklist)) continue;
+    if (!normalized || isBlocklisted(normalized.domain, blocklist) || isTransientUrl(normalized.url)) continue;
     if (seen.has(normalized.url)) continue;
     seen.add(normalized.url);
     if (await isAlreadyAssigned(normalized.url)) continue;
@@ -150,12 +163,11 @@ function hostnameOf(url: string): string | null {
   }
 }
 
-/** "a.com", "a.com + b.com", or "a.com + b.com +2" — most-used domains first. */
-function offlineGroupName(group: Candidate[]): string {
+/** "Gmail", "Gmail + Classroom", or "Gmail + Classroom +2" — most-used apps first (app names, not hostnames). */
+export function offlineGroupName(group: Candidate[]): string {
   const counts = new Map<string, number>();
   for (const c of group) {
-    const host = hostnameOf(c.url);
-    if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
+    if (hostnameOf(c.url)) counts.set(appLabel(c.url), (counts.get(appLabel(c.url)) ?? 0) + 1);
   }
   const domains = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([d]) => d);
   if (domains.length <= 2) return domains.join(' + ');
@@ -202,6 +214,8 @@ export async function applyDomainFallback(
 
 interface UsageSignals {
   stats: Map<string, PairStat>;
+  /** Pair stats over the last few hours only: decides which tabs have real co-usage and may join a space. */
+  recentStats: Map<string, PairStat>;
   burstsByUrl: Map<string, number>;
 }
 
@@ -220,7 +234,12 @@ async function gatherUsageSignals(): Promise<UsageSignals> {
   for (const e of typing) {
     if (e.url) burstsByUrl.set(e.url, (burstsByUrl.get(e.url) ?? 0) + 1);
   }
-  return { stats: computePairStats(activations), burstsByUrl };
+  const recentCut = now - RECENT_CO_USAGE_MS;
+  return {
+    stats: computePairStats(activations),
+    recentStats: computePairStats(activations.filter((a) => a.ts >= recentCut)),
+    burstsByUrl,
+  };
 }
 
 function toAiUrls(list: Candidate[]): { url: string; title: string }[] {
@@ -235,7 +254,7 @@ function toAiUrls(list: Candidate[]): { url: string; title: string }[] {
 export async function recomputeSpaces(): Promise<void> {
   const [allSpaces, allSpaceUrls] = await Promise.all([getSpaces(), getSpaceUrls()]);
   const candidates = (await getCandidateUrls()).slice(0, MAX_CANDIDATES);
-  const { stats, burstsByUrl } = await gatherUsageSignals();
+  const { stats, recentStats, burstsByUrl } = await gatherUsageSignals();
 
   const offlineIds = new Set(allSpaces.filter((s) => s.status === 'auto_offline').map((s) => s.id));
   const reassignable = new Map<string, SpaceUrl>();
@@ -243,7 +262,10 @@ export async function recomputeSpaces(): Promise<void> {
     if (offlineIds.has(u.spaceId) && u.source === 'ai' && !u.alwaysOpen) reassignable.set(u.url, u);
   }
   const fixedUrls = new Set(allSpaceUrls.filter((u) => !reassignable.has(u.url)).map((u) => u.url));
-  const pool = candidates.filter((c) => !fixedUrls.has(c.url));
+  // Only tabs really used together in the last few hours join a space. The rest stay unassigned and
+  // show under "Other" in the panel, instead of padding a space with unrelated tabs.
+  const coUsed = urlsWithCoUsage(candidates.map((c) => c.url), recentStats);
+  const pool = candidates.filter((c) => !fixedUrls.has(c.url) && coUsed.has(c.url));
   if (pool.length === 0) return;
 
   const poolUrls = pool.map((c) => c.url);

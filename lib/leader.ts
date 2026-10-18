@@ -25,7 +25,7 @@ import {
   handleLeaderNotificationButtonClicked,
   keepLastAsMacro,
   repeatLastMacro,
-  setAfterSaveHook,
+  setLetterSuggester,
   stopRunningMacro,
   toggleMark,
 } from './macro-leaders';
@@ -47,7 +47,7 @@ let builtinsRegistered = false;
 export function registerBuiltinLeaders(): void {
   if (builtinsRegistered) return;
   builtinsRegistered = true;
-  setAfterSaveHook(offerMacroLetter);
+  setLetterSuggester(async (macro) => suggestLetter(macro.name, await takenLetters()));
   // chrome.sidePanel.open() needs a user gesture that a letter relayed from the overlay does not carry
   // (the overlay itself shows "Click the Cadence icon"). This run() only matters from non-overlay
   // callers, which get the same instruction as a notification.
@@ -145,23 +145,6 @@ async function allAssignments(): Promise<Assignment[]> {
     ...spaceLetters.map((s) => ({ id: `space:${s.spaceId}`, letter: s.letter })),
     ...macroLetters.map((m) => ({ id: `macro:${m.macroId}`, letter: m.letter })),
   ];
-}
-
-/** After a macro is saved (R, K, M): offer the first free letter of its name with a one-click confirm. */
-export async function offerMacroLetter(macro: Macro): Promise<void> {
-  if (macro.letter || macro.id === undefined) return;
-  const letter = suggestLetter(macro.name, await takenLetters());
-  if (!letter) return;
-  const L = letter.toUpperCase();
-  await chrome.notifications
-    .create(`${LEADER_NOTIFICATION_PREFIX}letter:${macro.id}:${letter}`, {
-      type: 'basic',
-      iconUrl: '/icon/128.png',
-      title: `Assign letter ${L}?`,
-      message: `Leader + ${L} will run "${macro.name}".`,
-      buttons: [{ title: `Assign ${L}` }, { title: 'Skip' }],
-    })
-    .catch(() => undefined);
 }
 
 /** Notification buttons for everything under `cadence-leader:`. */

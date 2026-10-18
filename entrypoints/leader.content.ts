@@ -3,6 +3,8 @@
 // clicks reach the collector: while open it sets a flag the main content script checks.
 import { createContentGuard } from '@/lib/content-guard';
 import type { LeaderRepeatPreviewMessage, LeaderShowMessage } from '@/lib/hotkeys';
+import type { LeaderToastMessage } from '@/lib/keep-feedback';
+import { showToast } from '@/lib/toast';
 import { mountPie, type PieController } from '@/lib/pie-menu';
 import type { ContentMessage } from '@/lib/types';
 
@@ -51,7 +53,17 @@ export default defineContentScript({
         if (!guard.alive()) return;
         const type = (message as { type?: string } | undefined)?.type;
         if (type === 'leader_show') show(message as LeaderShowMessage);
-        else if (type === 'leader_repeat_preview') {
+        else if (type === 'leader_toast') {
+          const m = message as LeaderToastMessage;
+          close();
+          showToast({
+            title: m.title,
+            message: m.message,
+            action: m.assign
+              ? { label: `Assign ${m.assign.letter.toUpperCase()}`, run: () => send({ type: 'leader_assign_letter', macroId: m.assign!.macroId, letter: m.assign!.letter }) }
+              : undefined,
+          });
+        } else if (type === 'leader_repeat_preview') {
           const m = message as LeaderRepeatPreviewMessage;
           pie?.setPreview(m.text, m.runnable);
         }

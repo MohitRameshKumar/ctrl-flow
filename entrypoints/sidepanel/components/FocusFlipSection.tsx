@@ -130,6 +130,11 @@ export function FocusFlipSection() {
         {status.label}
       </div>
 
+      <p className="settings-hint">
+        Even while this is off, ctrl-flow counts tab switches and whether you typed in a tab (never what you type) so it can offer to turn
+        Focus Flip on when it spots a writing and reference pair. Nothing flips until you turn it on.
+      </p>
+
       <DelaySlider
         label="Flip to reference after typing stops"
         hint="How long you stop typing in the writing tab before ctrl-flow flips to the reference tab."

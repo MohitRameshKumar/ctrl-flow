@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { addSpaceUrl, getSpaces, getSpaceUrls, moveSpaceUrl, renameSpace, setSpaceUrlAlwaysOpen } from '@/lib/db';
+import { addSpaceUrl, getEventsByKind, getSpaces, getSpaceUrls, moveSpaceUrl, renameSpace, setSpaceUrlAlwaysOpen } from '@/lib/db';
 import {
   clearPendingSwitchSuggestion,
   closeAndSaveSpace,
@@ -13,6 +13,7 @@ import {
   type PendingSwitchSuggestion,
 } from '@/lib/spaces';
 import type { Space, SpaceUrl } from '@/lib/types';
+import { topByRecentUse } from '@/lib/co-usage';
 import { SpaceLetterControl } from './SpaceLetterControl';
 import { SuggestionCard } from './SuggestionCard';
 import { Icon, IconButton, Keycap, Menu, SiteTile } from './ui';
@@ -50,12 +51,15 @@ function SpaceNameInput({ space, onRename, onDone }: { space: Space; onRename: (
 function SpaceCard({
   space,
   allSpaces,
+  lastUsed,
   onRefresh,
 }: {
   space: SpaceWithUrls;
   allSpaces: Space[];
+  lastUsed: Map<string, number>;
   onRefresh: () => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [showLetter, setShowLetter] = useState(false);
@@ -113,7 +117,7 @@ function SpaceCard({
             <div className="empty">No tabs in this space yet.</div>
           ) : (
             <ul className="step-list">
-              {space.urls.map((u) => {
+              {(showAll ? space.urls : topByRecentUse(space.urls, lastUsed).shown).map((u) => {
                 if (u.id === undefined) return null;
                 const spaceUrlId = u.id;
                 const others = allSpaces.filter((x) => x.id !== undefined && x.id !== spaceId);
@@ -148,6 +152,13 @@ function SpaceCard({
                   </li>
                 );
               })}
+              {!showAll && space.urls.length > topByRecentUse(space.urls, lastUsed).shown.length && (
+                <li>
+                  <button className="btn-link" onClick={() => setShowAll(true)}>
+                    +{topByRecentUse(space.urls, lastUsed).more} more
+                  </button>
+                </li>
+              )}
             </ul>
           )}
         </div>
@@ -170,13 +181,17 @@ function UnassignedSection({
     onRefresh();
   };
 
+  const [open, setOpen] = useState(false);
   if (unassigned.length === 0) return null;
   return (
     <section>
-      <h3 className="sec-title">
-        Unassigned <span className="count">{unassigned.length}</span>
-      </h3>
-      <ul className="step-list flush">
+      <button className="group-head" aria-expanded={open} onClick={() => setOpen((v) => !v)} title="Open tabs that were not used together with others recently">
+        <span className={open ? 'chev open' : 'chev'}>
+          <Icon name="chevron" size={14} />
+        </span>
+        Other <span className="count">{unassigned.length}</span>
+      </button>
+      {open && <ul className="step-list flush">
         {unassigned.map((c) => (
           <li key={c.url}>
             <SiteTile url={c.url} />
@@ -194,7 +209,7 @@ function UnassignedSection({
             )}
           </li>
         ))}
-      </ul>
+      </ul>}
     </section>
   );
 }
@@ -236,6 +251,7 @@ function SwitchSuggestionBanner({
 export function SpacesTab() {
   const [spaces, setSpaces] = useState<SpaceWithUrls[]>([]);
   const [unassigned, setUnassigned] = useState<Candidate[]>([]);
+  const [lastUsed, setLastUsed] = useState<Map<string, number>>(new Map());
   const [pending, setPending] = useState<PendingSwitchSuggestion | null>(null);
   const [loading, setLoading] = useState(true);
   const [recomputing, setRecomputing] = useState(false);
@@ -251,6 +267,12 @@ export function SpacesTab() {
       ...s,
       urls: allUrls.filter((u) => u.spaceId === s.id),
     }));
+    const now = Date.now();
+    const used = new Map<string, number>();
+    for (const e of await getEventsByKind('tab_activated', now - 7 * 24 * 60 * 60 * 1000, now)) {
+      if (e.url && !e.programmatic) used.set(e.url, Math.max(used.get(e.url) ?? 0, e.ts));
+    }
+    setLastUsed(used);
     setSpaces(grouped);
     setUnassigned(unassignedTabs);
     setPending(pendingSwitch);
@@ -294,7 +316,7 @@ export function SpacesTab() {
         <div className="empty">No spaces yet. Open a few related tabs for a while, then press recompute.</div>
       )}
       {spaces.map((s) => (
-        <SpaceCard key={s.id} space={s} allSpaces={spaces} onRefresh={refresh} />
+        <SpaceCard key={s.id} space={s} allSpaces={spaces} lastUsed={lastUsed} onRefresh={refresh} />
       ))}
 
       <UnassignedSection unassigned={unassigned} spaces={spaces} onRefresh={refresh} />
