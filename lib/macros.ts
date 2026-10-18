@@ -457,7 +457,7 @@ export async function checkTimeOfDayTriggers(): Promise<void> {
         type: 'basic',
         iconUrl: '/icon/128.png',
         title: `Running ${macro.name}`,
-        message: `Starting in ${MACRO_AUTORUN_GRACE_MS / 1000}s. Open Cadence to cancel.`,
+        message: `Starting in ${MACRO_AUTORUN_GRACE_MS / 1000}s. Open ctrl-flow to cancel.`,
         buttons: [{ title: 'Run now' }, { title: 'Not now' }],
       });
     }

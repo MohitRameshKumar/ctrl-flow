@@ -4,21 +4,28 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
+    name: 'ctrl-flow',
+    short_name: 'ctrl-flow',
+    description: 'ctrl-flow: finds the routines in your Chrome activity, groups tabs into projects and repeats them with one key. Everything stays on your device.',
     // Pins a stable extension ID across every machine. Regenerate with scripts/gen-key.sh.
     key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3yRH6SsNsNkjn1QHq66nHRg88YYzVlwSBfif9rXP+VmAVrF+yIqcwkX1M5915isHvuElevmP/HIcSdgEDC+8CqxnJp4pDxO4OS6JmAaLey1Ffg/6WfJP5qtzRaK+kxX9/Xo3/EjGcmMy5HY0ivI+5gqlghMTslkQCpNQEQ9C6lK8zfhiygicteSxpPNts3Qn4pfXGWlskKwyAyYhIchyjxnXvN/NmQySSCGH4ljUg8Ux0ukvGO7rmDq7gIPTAjzPFeanHKn8te7sSC97crMaxN59VoHb48AEmVPU+4gbinL8arrFcunRT+TSsIEhObDCL+ZWRpXnFFfA++PrOCPzoQIDAQAB',
     // Toolbar button. Required for the recording/paused badge (UI-5) and for click-icon-opens-panel.
-    action: { default_title: 'Cadence' },
+    action: { default_title: 'ctrl-flow' },
     // Leader key. `Ctrl` becomes ⌘ on macOS (Ctrl+Alt combos are not allowed by Chrome).
     commands: {
       'leader-key': {
         suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
-        description: 'Cadence: open the leader-key menu',
+        description: 'ctrl-flow: open the leader-key menu',
       },
       // No default binding: the palette is reachable via leader → / (search includes macros), and
       // the Macros tab shows "Set a shortcut" if the user wants a direct key.
       'open-macro-palette': {
-        description: 'Cadence: open the macro palette',
+        description: 'ctrl-flow: open the macro palette',
       },
+      'run-macro-slot-1': { description: 'ctrl-flow: run macro slot 1' },
+      'run-macro-slot-2': { description: 'ctrl-flow: run macro slot 2' },
+      'run-macro-slot-3': { description: 'ctrl-flow: run macro slot 3' },
+      'run-macro-slot-4': { description: 'ctrl-flow: run macro slot 4' },
     },
     permissions: [
       'tabs',

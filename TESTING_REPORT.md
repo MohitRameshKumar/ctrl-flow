@@ -1,4 +1,4 @@
-# Cadence Testing Report
+# ctrl-flow Testing Report
 
 ## Progress
 - [x] Step 1: Re-run collector.spec.ts
@@ -159,7 +159,7 @@ Setup: `npm run build`, `chrome://extensions` -> Developer mode -> Load unpacked
 - `lib/spaces.ts`: sends `edges`/`typed` (and `context` for `assign_tabs`); candidates capped at 150, titles at 120 chars; auto-offline spaces are regrouped by AI when it succeeds; offline fallback merges tabs with >=3 direct switches across domains.
 - `proxy/src/tasks.ts`: prompts make co-usage the primary signal; edges/typed/context validated and capped. **Redeployed.**
 - `lib/db.ts`: renaming a space now sets `status: 'user'` (protects it from regrouping); `lib/types.ts`: optional `programmatic` / `synthetic` event fields. No Dexie schema change (v1-v3 untouched, extra fields are unindexed).
-- `lib/programmatic.ts` + `background.ts`/`spaces.ts`/`rituals.ts`: tab activations caused by Cadence (restore, open ritual docs) are flagged and ignored by switch detection and co-usage.
+- `lib/programmatic.ts` + `background.ts`/`spaces.ts`/`rituals.ts`: tab activations caused by ctrl-flow (restore, open ritual docs) are flagged and ignored by switch detection and co-usage.
 - `lib/ritual-simulation.ts` + debug page: "Simulate 2 past Team syncs" / "Wipe simulated data". Real detection thresholds unchanged. It writes via `setDemoCalendarEvents` (exported from `lib/calendar.ts`; that file is not modified).
 - Tests: `e2e/unit/co-usage.spec.ts` (9), `e2e/spaces-usage.spec.ts` (6), `e2e/rituals-sim.spec.ts` (1), regression test in `spaces.spec.ts` (1), co-usage live test (1). Mock proxy honors edges and has `/__mock/last`.
 
@@ -177,7 +177,7 @@ Setup: `npm run build`, `chrome://extensions` -> Developer mode -> Load unpacked
 - Programmatic-flag coverage is by seeded events; the actual Restore/ritual flow setting the flag was not asserted end to end.
 
 ## Addendum 3: Focus Flip (2026-10-17)
-Opt-in (off by default) flipping between a writing tab and a reference tab. Files: `lib/flip-learning.ts` (pure learning), `lib/focus-flip.ts` (runtime), `lib/programmatic.ts` (tab-aware Cadence-initiated marks), `entrypoints/content.ts` (throttled counts-only pulses, inert unless enabled), `entrypoints/sidepanel/components/FocusFlipSection.tsx`, Dexie **v4** `flipPairs` (v1–v3 untouched).
+Opt-in (off by default) flipping between a writing tab and a reference tab. Files: `lib/flip-learning.ts` (pure learning), `lib/focus-flip.ts` (runtime), `lib/programmatic.ts` (tab-aware ctrl-flow-initiated marks), `entrypoints/content.ts` (throttled counts-only pulses, inert unless enabled), `entrypoints/sidepanel/components/FocusFlipSection.tsx`, Dexie **v4** `flipPairs` (v1–v3 untouched).
 - Tests: `e2e/unit/flip-learning.spec.ts` (10), `e2e/focus-flip.spec.ts` (11). Negative control: removing the "skip the switch offer for programmatic activations" guard makes the Spaces test fail.
 - `npm run test:e2e` x2 (consecutive): 62 tests, 61 passed, 0 failed, 1 skipped (OS focus), 5.0m each; hook-leak check PASS. `test:e2e:live`: 5 passed. `tsc`: 0 errors.
 - Not covered by automation: the real "Chrome not focused" check (`chrome.windows.getLastFocused().focused`; e2e uses a test probe), real Docs/NYT pages, service-worker sleep during a long (up to 60 s) flip (mitigated by keep-alive pings plus a `chrome.alarms` backup; not exercised).

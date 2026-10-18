@@ -1,4 +1,4 @@
-# Cadence — manual test script
+# ctrl-flow — manual test script
 
 Run in demo order, in Chrome. Each step: what to do, then **Expected:**. Tick as you go.
 Where a label is paraphrased below, match it by meaning, not exact text.
@@ -7,19 +7,19 @@ Where a label is paraphrased below, match it by meaning, not exact text.
 Open a normal `https://` page (not `chrome://`). Keep the side panel open (click the toolbar icon).
 Debug page: `chrome-extension://<id>/debug.html` (id is on the extensions page).
 
-Useful tools: service-worker console (extensions page → Cadence → *service worker*), and the debug page for event counts.
+Useful tools: service-worker console (extensions page → ctrl-flow → *service worker*), and the debug page for event counts.
 
 ---
 
 ## 1. Reload and health
-1. [ ] On `chrome://extensions`, click **Reload** on Cadence.
+1. [ ] On `chrome://extensions`, click **Reload** on ctrl-flow.
    **Expected:** no red *Errors* button on the card. No "Status code: 15" / service-worker registration failure.
 2. [ ] Open the service-worker console.
    **Expected:** no uncaught errors; no `[cadence] ... failed` lines on startup.
 3. [ ] Click the toolbar icon.
    **Expected:** side panel opens with tabs **Rituals · Spaces · Macros · Standup**, then sections Focus Flip, Leader keys, Privacy, Settings.
 4. [ ] `chrome://extensions/shortcuts`.
-   **Expected:** two Cadence commands listed: *open the leader-key menu* (Ctrl/⌘+Shift+Space) and *open the macro palette* (Ctrl/⌘+Shift+Y).
+   **Expected:** six ctrl-flow commands: *open the leader-key menu* (Ctrl/⌘+Shift+Y by default), *open the macro palette* and *run macro slot 1–4* (no default keys; bind them here).
 5. [ ] DevTools → Application → IndexedDB → `cadence`.
    **Expected:** database version 60 (IndexedDB shows Dexie's version ×10, i.e. Dexie v6); stores: `events, rituals, spaces, spaceUrls, shelves, flipPairs, macros, macroRuns`.
 
@@ -32,7 +32,7 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** no new events for that domain (debug page → recent events has none). Remove it afterwards.
 4. [ ] Type in a password field on any login page (don't submit).
    **Expected:** no `field_changed` event for it; no typed text appears anywhere in events.
-5. [ ] `chrome://extensions` → Cadence → Details.
+5. [ ] `chrome://extensions` → ctrl-flow → Details.
    **Expected:** *Allow in Incognito* is unavailable (manifest says `not_allowed`), so nothing from Incognito can be recorded.
 6. [ ] Settings → **Show last AI request** (after a Standup/Coverage run later).
    **Expected:** shows exactly what was sent; no blocklisted domains, no password-manager sites.
@@ -65,7 +65,7 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
 2. [ ] Repeat several times: type in a "writing" tab, flip to a "reference" tab, return and keep typing (needs 2–3 round trips; demo mode needs fewer).
    **Expected:** a learned pair appears in the pairs list.
 3. [ ] Type in the writing tab, then stop typing for the learned pause.
-   **Expected:** Cadence flips to the reference tab, then returns to the writing tab.
+   **Expected:** ctrl-flow flips to the reference tab, then returns to the writing tab.
 4. [ ] While flipped, scroll or click in the reference tab.
    **Expected:** the flip is cancelled and you stay put.
 5. [ ] Press Leader **S** during a flip.
@@ -109,7 +109,7 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
 3. [ ] Select three ways: press a letter; click a slice; move the mouse toward a slice (even past the ring) and click. **Expected:** all three run that slice. Clicking the empty center does nothing; clicking well outside the ring closes it.
 4. [ ] With more than 8 items (add letters to several macros/spaces). **Expected:** the 8th slice is "More…" and opens the search list; every item still runs on its letter.
 5. [ ] Press R after a 3-page task. **Expected:** the center shows "Repeat 3 steps: Open … Enter run & save · Esc cancel". Enter runs; Esc cancels.
-6. [ ] Press **E**. **Expected:** the center says to click the Cadence toolbar icon.
+6. [ ] Press **E**. **Expected:** the center says to click the ctrl-flow toolbar icon.
 7. [ ] Pause (P) toggles recording; Search (/) → type a macro/space/ritual name → Enter runs it.
 8. [ ] Switch the OS between light and dark. **Expected:** the pie follows it; text stays crisp when you zoom the page to 200%.
 9. [ ] Open the debug event list after using the pie. **Expected:** no events from clicking or typing in it.

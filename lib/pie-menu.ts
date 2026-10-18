@@ -153,7 +153,7 @@ export function mountPie(
 
   let mode: Mode = 'pie';
   let hovered = -1;
-  let centerTitle = 'Cadence';
+  let centerTitle = 'ctrl-flow';
   let centerText = 'Press a letter, or aim and click.';
   let centerKey = '';
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -181,7 +181,7 @@ export function mountPie(
     const n = slices.length;
     wrap.innerHTML =
       `<div class="scrim"></div><div class="pie"><div class="rise">` +
-      `<svg viewBox="-170 -170 340 340" role="menu" aria-label="Cadence leader menu">` +
+      `<svg viewBox="-170 -170 340 340" role="menu" aria-label="ctrl-flow leader menu">` +
       slices.map((s, i) => sliceSvg(s, i, n)).join('') +
       `<circle class="hub" r="${INNER - 4}"/></svg>` +
       `<div class="center"><div class="c-title"></div><div class="c-text"></div><div class="c-key"></div></div>` +
@@ -221,7 +221,7 @@ export function mountPie(
     paintHover();
     const s = slices[index];
     if (s) setCenter(s.label, s.description, s.letter ? s.letter.toUpperCase() : '');
-    else setCenter('Cadence', 'Press a letter, or aim and click.');
+    else setCenter('ctrl-flow', 'Press a letter, or aim and click.');
   }
 
   function renderSearch(): void {
@@ -273,7 +273,7 @@ export function mountPie(
     }
     if (item.id === 'open_panel') {
       // chrome.sidePanel.open() needs a user gesture that a relayed key press does not carry.
-      notice('Open the panel', 'Click the Cadence icon in the toolbar to open the panel.');
+      notice('Open the panel', 'Click the ctrl-flow icon in the toolbar to open the panel.');
       return;
     }
     handlers.runLetter(item.letter);

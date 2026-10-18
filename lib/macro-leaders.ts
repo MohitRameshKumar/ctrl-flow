@@ -111,7 +111,7 @@ export async function previewRepeat(ctx: LeaderContext = {}): Promise<void> {
     await chrome.notifications.create(REPEAT_NOTIFICATION_ID, {
       type: 'basic',
       iconUrl: '/icon/128.png',
-      title: 'Cadence · repeat',
+      title: 'ctrl-flow · repeat',
       message: text,
       ...(runnable ? { buttons: [{ title: 'Run' }, { title: 'Cancel' }] } : {}),
     });

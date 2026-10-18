@@ -1,4 +1,4 @@
-# WXT + React
+# ctrl-flow
 
 This template should help get you started developing with React in WXT.
 

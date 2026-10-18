@@ -55,20 +55,20 @@ export function registerBuiltinLeaders(): void {
     letter: 'e',
     label: 'Open side panel (click the icon)',
     short: 'Panel',
-    description: 'Open the Cadence panel (click the toolbar icon)',
+    description: 'Open the ctrl-flow panel (click the toolbar icon)',
     run: async () => {
       await chrome.notifications.create(`cadence-leader:panel-${Date.now()}`, {
         type: 'basic',
         iconUrl: '/icon/128.png',
-        title: 'Cadence',
-        message: 'Click the Cadence icon in the toolbar to open the panel.',
+        title: 'ctrl-flow',
+        message: 'Click the ctrl-flow icon in the toolbar to open the panel.',
       });
     },
   });
   registerLeader({
     id: 'stop',
     letter: 's',
-    label: 'Stop what Cadence is doing',
+    label: 'Stop what ctrl-flow is doing',
     short: 'Stop',
     description: 'Stop a running macro or Focus Flip',
     run: async () => {
@@ -316,7 +316,7 @@ async function notifyLeaderUnavailable(): Promise<void> {
       type: 'basic',
       iconUrl: '/icon/128.png',
       title: 'Leader key unavailable on this page',
-      message: 'Reload the tab and try again, or click the Cadence icon.',
+      message: 'Reload the tab and try again, or click the ctrl-flow icon.',
     })
     .catch(() => undefined);
 }

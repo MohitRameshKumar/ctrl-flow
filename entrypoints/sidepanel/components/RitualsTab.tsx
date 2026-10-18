@@ -75,7 +75,7 @@ function RitualCard({
       {ritual.status === 'suggested' && !suggestionDismissed && (
         <SuggestionCard
           title="Run this ritual automatically next time?"
-          description="Cadence noticed these tabs around this meeting every time."
+          description="ctrl-flow noticed these tabs around this meeting every time."
           onAccept={() => setStatus('accepted')}
           onNotNow={() => setSuggestionDismissed(true)}
           onNever={() => setStatus('never')}

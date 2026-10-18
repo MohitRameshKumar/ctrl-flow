@@ -1,6 +1,6 @@
 {
   "name": "cadence-collector",
-  "description": "Cadence activity collector: records Chrome-only activity locally for routine detection.",
+  "description": "ctrl-flow: records Chrome-only activity locally to find routines and repeat them.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
