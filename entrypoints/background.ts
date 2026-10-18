@@ -3,7 +3,8 @@ import { createCalendarSource } from '@/lib/calendar';
 import { MACRO_LOOKBACK_MS } from '@/lib/constants';
 import { checkPaperLookup } from '@/lib/find-pdf-command';
 import { isPdfSearchUrl } from '@/lib/paper-pattern';
-import { db, pruneMacroData } from '@/lib/db';
+import { syncEvents } from '@/lib/cloud-sync';
+import { db, pruneMacroData, pruneTtsCache } from '@/lib/db';
 import { normalizeUrl } from '@/lib/normalize';
 import { routeNotificationButtonClicked } from '@/lib/notifications';
 import {
@@ -407,7 +408,16 @@ async function purgeExpiredEvents(): Promise<void> {
  * code path a real alarm would, without waiting on chrome.alarms' real scheduling. */
 async function handleAlarm(name: string): Promise<void> {
   if (name === CLEANUP_ALARM) {
+    // Mirror before purging. The purge deletes events past the retention setting, so anything
+    // dropped first would never reach TigerData at all. Sync failure is deliberately swallowed:
+    // an unreachable proxy must not stop retention from running.
+    try {
+      await syncEvents();
+    } catch (err) {
+      console.warn('[cadence] cloud sync failed', err);
+    }
     await purgeExpiredEvents();
+    await pruneTtsCache();
     return;
   }
 

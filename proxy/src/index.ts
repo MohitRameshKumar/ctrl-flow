@@ -1,7 +1,6 @@
-import type { LlmEnv } from './llm';
-import { TASK_NAMES, runTask, type TaskName } from './tasks';
+import { TASK_NAMES, runTask, type TaskEnv, type TaskName } from './tasks';
 
-export interface Env extends LlmEnv {
+export interface Env extends TaskEnv {
   CADENCE_TOKEN: string;
   ALLOWED_ORIGIN: string;
 }
@@ -29,7 +28,7 @@ function isTaskName(value: string): value is TaskName {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = env.ALLOWED_ORIGIN;
 
     if (request.method === 'OPTIONS') {
@@ -70,7 +69,7 @@ export default {
       return json(400, { error: 'unknown task' }, origin);
     }
 
-    const result = await runTask(task, env, input);
+    const result = await runTask(task, env, ctx, input);
     return json(result.status, result.body, origin);
   },
 } satisfies ExportedHandler<Env>;

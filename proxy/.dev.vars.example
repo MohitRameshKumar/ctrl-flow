@@ -1,2 +1,10 @@
 ANTHROPIC_API_KEY=sk-ant-...
 CADENCE_TOKEN=pick-any-random-string
+
+# ElevenLabs text to speech (the `tts` task). Without this the task returns 501 and the
+# extension falls back to the browser's built-in voice.
+ELEVENLABS_API_KEY=sk_...
+
+# TigerData, for `wrangler dev` only. In production the Hyperdrive binding in wrangler.jsonc
+# supplies this. The suffix is the binding name.
+WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://user:pass@host:5432/tsdb?sslmode=require

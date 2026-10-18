@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { generateCoverage, generateStandup, type DraftSource } from '@/lib/standup';
+import { speak, stop as stopSpeech, type TtsSource } from '@/lib/tts';
 import { linesToItems, standupToMarkdown, type StandupDraft, type StandupRangeKind } from '@/lib/standup-input';
 
 const RANGE_OPTIONS: { value: StandupRangeKind; label: string }[] = [
@@ -151,8 +152,9 @@ export function StandupTab() {
   const [texts, setTexts] = useState<{ yesterday: string; today: string; blockers: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [voice, setVoice] = useState<TtsSource | null>(null);
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  useEffect(() => () => stopSpeech(), []);
 
   const draft = (): StandupDraft | null =>
     texts && {
@@ -162,8 +164,9 @@ export function StandupTab() {
     };
 
   const generate = async () => {
-    window.speechSynthesis?.cancel();
+    stopSpeech();
     setSpeaking(false);
+    setVoice(null);
     setBusy(true);
     setCopied(false);
     try {
@@ -177,19 +180,17 @@ export function StandupTab() {
     }
   };
 
-  const readAloud = () => {
+  const readAloud = async () => {
     const d = draft();
-    if (!d || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(speechText(d));
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
+    if (!d) return;
     setSpeaking(true);
-    window.speechSynthesis.speak(utterance);
+    // Resolves when playback starts; `setSpeaking(false)` is the callback for when it ends.
+    const result = await speak(speechText(d), () => setSpeaking(false));
+    if (!result.cancelled) setVoice(result.via);
   };
 
   const stop = () => {
-    window.speechSynthesis?.cancel();
+    stopSpeech();
     setSpeaking(false);
   };
 
@@ -239,11 +240,14 @@ export function StandupTab() {
                 Stop
               </button>
             ) : (
-              <button className="btn" onClick={readAloud}>
+              <button className="btn" onClick={() => void readAloud()}>
                 Read aloud
               </button>
             )}
           </div>
+          {voice === 'browser' && (
+            <div className="doc-seen">Used your browser&apos;s voice — the ElevenLabs voice was unavailable.</div>
+          )}
         </>
       )}
 

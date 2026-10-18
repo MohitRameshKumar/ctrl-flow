@@ -1,3 +1,4 @@
+import { CloudHistorySection } from './CloudHistorySection';
 import { FocusFlipSection } from './FocusFlipSection';
 import { LeaderKeysSection } from './LeaderKeysSection';
 import { PrivacySettings } from './PrivacySettings';
@@ -16,6 +17,9 @@ export function SettingsTab(props: SettingsPanelProps) {
       </Group>
       <Group title="Privacy">
         <PrivacySettings />
+      </Group>
+      <Group title="Cloud history" defaultOpen={false}>
+        <CloudHistorySection />
       </Group>
       <Group title="General" defaultOpen={false}>
         <SettingsPanel {...props} />

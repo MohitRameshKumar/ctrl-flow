@@ -159,7 +159,17 @@ export interface AiUrlInput {
   title: string;
 }
 
-export type TaskName = 'name_spaces' | 'assign_tabs' | 'standup' | 'coverage_doc';
+export type TaskName =
+  | 'name_spaces'
+  | 'assign_tabs'
+  | 'standup'
+  | 'coverage_doc'
+  /** Push a batch of activity metadata to TigerData (lib/cloud-sync.ts). */
+  | 'sync_events'
+  /** Read the TigerData daily aggregate back for the Settings panel. */
+  | 'activity_stats'
+  /** ElevenLabs text to speech; returns base64 mp3 (lib/tts.ts). */
+  | 'tts';
 
 /** Co-usage between two tabs, as indices into the request's tab list. Counts only. */
 export interface CoUsageEdge {
@@ -492,3 +502,14 @@ export interface MacroRunRecord {
 
 /** A macro read back with every optional field filled in. What all logic should consume. */
 export type NormalizedMacro = Macro & { params: MacroParam[]; stats: MacroStats };
+
+/**
+ * One cached text-to-speech clip. Keyed by a SHA-256 of the exact text, so an edited standup misses
+ * the cache and a re-read of an unchanged one costs nothing. Local only; never synced.
+ */
+export interface TtsCacheEntry {
+  id?: number;
+  hash: string;
+  blob: Blob;
+  createdAt: number;
+}

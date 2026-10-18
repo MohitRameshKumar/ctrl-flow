@@ -52,3 +52,16 @@ export async function getAutoRunEnabled(): Promise<boolean> {
 export async function setAutoRunEnabled(enabled: boolean): Promise<void> {
   await chrome.storage.local.set({ macroAutoRun: enabled });
 }
+
+/**
+ * Whether activity metadata is mirrored to TigerData. Off until the user opts in: everything else
+ * in this app stays on the device, so the one feature that does not has to be chosen deliberately.
+ */
+export async function getCloudSyncEnabled(): Promise<boolean> {
+  const { cloudSync } = await chrome.storage.local.get<{ cloudSync?: boolean }>('cloudSync');
+  return cloudSync === true;
+}
+
+export async function setCloudSyncEnabled(enabled: boolean): Promise<void> {
+  await chrome.storage.local.set({ cloudSync: enabled });
+}

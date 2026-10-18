@@ -1,7 +1,28 @@
+import { DbNotConfiguredError, insertEvents, queryStats, type ActivityRow, type PgEnv } from './db';
 import { completeJson, completeText, selectProvider, type LlmEnv, type LlmProvider } from './llm';
 
-export const TASK_NAMES = ['name_spaces', 'assign_tabs', 'standup', 'coverage_doc'] as const;
+export const TASK_NAMES = [
+  'name_spaces',
+  'assign_tabs',
+  'standup',
+  'coverage_doc',
+  'sync_events',
+  'activity_stats',
+  'tts',
+] as const;
 export type TaskName = (typeof TASK_NAMES)[number];
+
+/**
+ * Everything a task reads from the Worker environment. The LLM tasks need `LlmEnv`, the TigerData
+ * tasks need the Hyperdrive binding, and `tts` needs the ElevenLabs key — all optional secrets, so
+ * a deployment can run with only the pieces it has configured.
+ */
+export interface TaskEnv extends LlmEnv, PgEnv {
+  /** Secret. Absent means the `tts` task reports 501 and the client falls back to the browser voice. */
+  ELEVENLABS_API_KEY?: string;
+  ELEVENLABS_MODEL?: string;
+  ELEVENLABS_VOICE_ID?: string;
+}
 
 export interface UrlInput {
   url: string;
@@ -334,16 +355,166 @@ If a section has no data, write a single bullet "(none)".`;
   return { status: 200, body: { markdown: result.value } };
 }
 
-export async function runTask(task: TaskName, env: LlmEnv, input: unknown): Promise<TaskResult> {
-  const provider = selectProvider(env);
+// ---- TigerData sync ------------------------------------------------------------------------------
+
+/** Matches what the client batches (lib/cloud-sync.ts) with headroom under the Worker's 50 KB body cap. */
+const MAX_SYNC_ROWS = 300;
+const MAX_STATS_DAYS = 365;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Keeps only the five fields the hypertable has columns for.
+ *
+ * The client already strips URLs, selectors and field names before sending, but this is the same
+ * second line of defence `cleanList` gives the LLM tasks: whatever else the body contains cannot
+ * reach the database, because nothing else is read out of it.
+ */
+function validActivityRows(value: unknown): ActivityRow[] {
+  const cleaned = cleanList(
+    value,
+    { localId: 'number', ts: 'number', kind: 'string', domain: 'string', title: 'string' },
+    MAX_SYNC_ROWS,
+  );
+  return cleaned.flatMap((r) => {
+    const localId = r.localId as number;
+    const ts = r.ts as number;
+    const kind = r.kind as string;
+    // cleanList substitutes 0 for a missing number, which would be a 1970 timestamp; drop those
+    // rather than storing them, and drop rows with no kind since the column is NOT NULL.
+    if (!Number.isInteger(localId) || localId <= 0 || ts <= 0 || kind === '') return [];
+    return [{ localId, ts, kind, domain: r.domain as string, title: r.title as string }];
+  });
+}
+
+async function handleSyncEvents(env: TaskEnv, ctx: ExecutionContext, input: unknown): Promise<TaskResult> {
+  const raw = input as Record<string, unknown> | null;
+  const deviceId = cleanStr(raw?.deviceId, 36);
+  if (!UUID_RE.test(deviceId)) {
+    return { status: 400, body: { error: 'invalid deviceId for sync_events' } };
+  }
+  const rows = validActivityRows(raw?.events);
+  if (rows.length === 0) return { status: 200, body: { inserted: 0, received: 0 } };
+
+  try {
+    const inserted = await insertEvents(env, ctx, deviceId, rows);
+    return { status: 200, body: { inserted, received: rows.length } };
+  } catch (err) {
+    if (err instanceof DbNotConfiguredError) {
+      return { status: 501, body: { error: 'database not configured' } };
+    }
+    console.error('[cadence-proxy] sync_events failed', err);
+    return { status: 502, body: { error: 'database write failed' } };
+  }
+}
+
+async function handleActivityStats(env: TaskEnv, ctx: ExecutionContext, input: unknown): Promise<TaskResult> {
+  const raw = input as Record<string, unknown> | null;
+  const deviceId = cleanStr(raw?.deviceId, 36);
+  if (!UUID_RE.test(deviceId)) {
+    return { status: 400, body: { error: 'invalid deviceId for activity_stats' } };
+  }
+  const requested = typeof raw?.days === 'number' && Number.isFinite(raw.days) ? Math.floor(raw.days) : 14;
+  const days = Math.min(MAX_STATS_DAYS, Math.max(1, requested));
+
+  try {
+    return { status: 200, body: await queryStats(env, ctx, deviceId, days) };
+  } catch (err) {
+    if (err instanceof DbNotConfiguredError) {
+      return { status: 501, body: { error: 'database not configured' } };
+    }
+    console.error('[cadence-proxy] activity_stats failed', err);
+    return { status: 502, body: { error: 'database read failed' } };
+  }
+}
+
+// ---- text to speech ------------------------------------------------------------------------------
+
+/**
+ * The free ElevenLabs tier is 10k credits a month — 20k characters on Flash v2.5, which bills at
+ * half a credit per character. A standup is 500-1500 characters, so an unbounded body could spend
+ * a meaningful slice of the month in one request.
+ */
+const MAX_TTS_CHARS = 2000;
+/** Speech is fine at 32 kbps; the default mp3_44100_128 would quadruple the base64 payload. */
+const TTS_OUTPUT_FORMAT = 'mp3_22050_32';
+
+/** btoa(String.fromCharCode(...bytes)) overflows the stack on a whole buffer, so encode in chunks. */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Returns audio as base64 inside JSON rather than as a binary body.
+ *
+ * `index.ts` wraps every reply in JSON.stringify, and the desktop app re-wraps the main-process
+ * result as application/json (desktop/renderer/ai-fetch.ts). A binary body would break both, so
+ * base64 is what lets the whole existing client path carry audio unchanged.
+ */
+async function handleTts(env: TaskEnv, input: unknown): Promise<TaskResult> {
+  if (!env.ELEVENLABS_API_KEY) {
+    return { status: 501, body: { error: 'tts not configured' } };
+  }
+  const raw = input as Record<string, unknown> | null;
+  const text = cleanStr(raw?.text, MAX_TTS_CHARS);
+  if (text === '') return { status: 400, body: { error: 'invalid input for tts' } };
+
+  const voiceId = env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+  const modelId = env.ELEVENLABS_MODEL || 'eleven_flash_v2_5';
+
+  let res: Response;
+  try {
+    res = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${TTS_OUTPUT_FORMAT}`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, model_id: modelId }),
+      },
+    );
+  } catch (err) {
+    console.error('[cadence-proxy] tts network error', err);
+    return { status: 502, body: { error: 'tts request failed' } };
+  }
+
+  // 429 is passed through rather than folded into 502: the client distinguishes "out of quota this
+  // month" from "something broke", and only the former is expected to happen routinely.
+  if (res.status === 429) {
+    return { status: 429, body: { error: 'tts quota exhausted' } };
+  }
+  if (!res.ok) {
+    console.error('[cadence-proxy] tts failed', res.status, await res.text().catch(() => ''));
+    return { status: 502, body: { error: `tts failed (${res.status})` } };
+  }
+
+  const audio = toBase64(new Uint8Array(await res.arrayBuffer()));
+  return { status: 200, body: { audio, mime: 'audio/mpeg', chars: text.length } };
+}
+
+export async function runTask(
+  task: TaskName,
+  env: TaskEnv,
+  ctx: ExecutionContext,
+  input: unknown,
+): Promise<TaskResult> {
   switch (task) {
     case 'name_spaces':
-      return handleNameSpaces(provider, input);
+      return handleNameSpaces(selectProvider(env), input);
     case 'assign_tabs':
-      return handleAssignTabs(provider, input);
+      return handleAssignTabs(selectProvider(env), input);
     case 'standup':
-      return handleStandup(provider, input);
+      return handleStandup(selectProvider(env), input);
     case 'coverage_doc':
-      return handleCoverageDoc(provider, input);
+      return handleCoverageDoc(selectProvider(env), input);
+    case 'sync_events':
+      return handleSyncEvents(env, ctx, input);
+    case 'activity_stats':
+      return handleActivityStats(env, ctx, input);
+    case 'tts':
+      return handleTts(env, input);
   }
 }

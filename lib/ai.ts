@@ -11,17 +11,32 @@ export interface LastAiRequestRecord {
   error?: string;
 }
 
-export type RunTaskResult<T = unknown> = { ok: true; data: T } | { ok: false; error: string };
+export type RunTaskResult<T = unknown> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status?: number };
+
+export interface RunTaskOptions {
+  /**
+   * Whether to store the full request and response as "last AI request".
+   *
+   * On by default, and every LLM task wants it. The exceptions are the bulk tasks: a sync batch is
+   * ~40 KB of event rows and a tts reply is a few hundred KB of base64 audio, so recording either
+   * would park that in chrome.storage.local and bury the last real AI call the privacy viewer
+   * exists to show. Those callers log a summary through lib/outbound-log.ts instead.
+   */
+  record?: boolean;
+}
 
 /**
  * Calls the Cloudflare Worker proxy. Never sends an API key — the proxy holds that.
- * Always records the exact request/response in chrome.storage.local for the privacy
- * viewer in Settings, whether the call succeeds or fails.
+ * Records the exact request/response in chrome.storage.local for the privacy viewer in
+ * Settings, whether the call succeeds or fails, unless the caller opts out.
  */
 export async function runTask<T = unknown>(
   task: TaskName,
   input: unknown,
   timeoutMs: number = TIMEOUT_MS,
+  { record: shouldRecord = true }: RunTaskOptions = {},
 ): Promise<RunTaskResult<T>> {
   const proxyUrl = import.meta.env.WXT_PROXY_URL;
   const token = import.meta.env.WXT_PROXY_TOKEN;
@@ -33,9 +48,13 @@ export async function runTask<T = unknown>(
     response: null,
   };
 
+  const save = async (): Promise<void> => {
+    if (shouldRecord) await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+  };
+
   if (!proxyUrl || !token) {
     record.error = 'WXT_PROXY_URL / WXT_PROXY_TOKEN not configured (see .env.example)';
-    await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+    await save();
     return { ok: false, error: record.error };
   }
 
@@ -53,13 +72,13 @@ export async function runTask<T = unknown>(
     record.status = res.status;
     const body = await res.json().catch(() => null);
     record.response = body;
-    await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+    await save();
 
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, status: res.status };
     return { ok: true, data: body as T };
   } catch (err) {
     record.error = String(err);
-    await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+    await save();
     return { ok: false, error: record.error };
   } finally {
     clearTimeout(timer);

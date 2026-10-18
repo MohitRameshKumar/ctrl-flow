@@ -3,6 +3,8 @@
   "name": "cadence-proxy",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-17",
+  // `pg` needs node:net / node:tls to open a Postgres connection from a Worker.
+  "compatibility_flags": ["nodejs_compat"],
   "vars": {
     // The extension's chrome-extension:// origin. CORS only allows this exact origin.
     // Compute it from the public key in wxt.config.ts (see scripts/gen-key.sh), e.g.
@@ -13,6 +15,26 @@
     "WRITING_MODEL": "claude-sonnet-5-5",
     // "claude" (default) or "gemini". Gemini also needs the GEMINI_API_KEY secret (wrangler secret put GEMINI_API_KEY).
     "LLM_PROVIDER": "claude",
-    "GEMINI_MODEL": "gemini-2.5-flash"
-  }
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    // ElevenLabs text-to-speech (the `tts` task). Flash v2.5 costs half a credit per character
+    // instead of one, which doubles what the free tier covers. Voice is "Rachel", a stock voice
+    // available on every plan. Needs the ELEVENLABS_API_KEY secret.
+    "ELEVENLABS_MODEL": "eleven_flash_v2_5",
+    "ELEVENLABS_VOICE_ID": "21m00Tcm4TlvDq8ikWAM"
+  },
+  // Tiger Cloud (TigerData) Postgres, pooled by Hyperdrive. REPLACE `id` with your own:
+  //   npx wrangler hyperdrive create cadence-tiger --connection-string="postgres://..."
+  // Hyperdrive is free on the Workers free plan (100k queries/day). Pooling is required, not an
+  // optimisation: a free Tiger service allows only 8 non-reserved connections.
+  // Remove this whole block to run without the database; sync_events / activity_stats then 501.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "REPLACE_WITH_YOUR_HYPERDRIVE_ID",
+      // Used by `wrangler dev` only; ignored in production. Put the real connection string in
+      // proxy/.dev.vars as WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE instead of here,
+      // so it never lands in git.
+      "localConnectionString": "postgresql://postgres:postgres@localhost:5432/postgres"
+    }
+  ]
 }

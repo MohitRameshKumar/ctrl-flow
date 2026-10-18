@@ -17,6 +17,7 @@ import type {
   Shelf,
   Space,
   SpaceUrl,
+  TtsCacheEntry,
 } from './types';
 
 const db = new Dexie('cadence') as Dexie & {
@@ -28,6 +29,7 @@ const db = new Dexie('cadence') as Dexie & {
   flipPairs: EntityTable<FlipPair, 'id'>;
   macros: EntityTable<Macro, 'id'>;
   macroRuns: EntityTable<MacroRunRecord, 'id'>;
+  ttsCache: EntityTable<TtsCacheEntry, 'id'>;
 };
 
 db.version(1).stores({
@@ -76,6 +78,21 @@ db.version(6).stores({
   flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
   macros: '++id, macroKey, status, updatedAt',
   macroRuns: '++id, macroId, startedAt',
+});
+
+// v7 adds `ttsCache`: generated speech, keyed by a hash of the text it was generated from, so
+// re-reading an unchanged standup costs no ElevenLabs credits. Every earlier table carries forward
+// unchanged. Nothing stored here ever leaves the device.
+db.version(7).stores({
+  events: '++id, ts, kind, domain, tabId, [kind+ts]',
+  rituals: '++id, seriesKey, status, updatedAt',
+  spaces: '++id, name, status, createdAt, updatedAt',
+  spaceUrls: '++id, spaceId, url, source, [spaceId+url]',
+  shelves: '++id, spaceId, createdAt',
+  flipPairs: '++id, [writingUrl+referenceUrl], active, updatedAt',
+  macros: '++id, macroKey, status, updatedAt',
+  macroRuns: '++id, macroId, startedAt',
+  ttsCache: '++id, &hash, createdAt',
 });
 
 export { db };
@@ -445,4 +462,35 @@ export async function pruneMacroData(cutoff: number): Promise<void> {
 
 export async function deleteMacro(id: number): Promise<void> {
   await db.macros.delete(id);
+}
+
+// ---- tts cache ----------------------------------------------------------------------------------
+
+/** Audio for this exact text, or undefined if it has never been generated. */
+export function getTtsCached(hash: string): Promise<TtsCacheEntry | undefined> {
+  return db.ttsCache.where('hash').equals(hash).first();
+}
+
+export async function putTtsCached(hash: string, blob: Blob): Promise<void> {
+  // `hash` is a unique index, so a concurrent second read of the same text can collide here. The
+  // row already being present is the outcome we wanted, so treat the failure as success.
+  try {
+    await db.ttsCache.add({ hash, blob, createdAt: Date.now() });
+  } catch {
+    /* already cached */
+  }
+}
+
+/**
+ * Keeps the newest `keep` clips and drops the rest. Audio is far larger than anything else in this
+ * database, so unlike macro run history it is capped by count rather than age: a cache that grows
+ * forever would be the biggest thing on disk.
+ */
+export async function pruneTtsCache(keep = 20): Promise<void> {
+  const stale = await db.ttsCache.orderBy('createdAt').reverse().offset(keep).primaryKeys();
+  if (stale.length > 0) await db.ttsCache.bulkDelete(stale);
+}
+
+export async function clearTtsCache(): Promise<void> {
+  await db.ttsCache.clear();
 }

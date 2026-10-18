@@ -37,6 +37,12 @@ function LastOutboundViewer() {
           {last?.via === 'pdf-lookup' && (
             <p className="hint">Only the title you selected was sent, only to the sources listed, and only because you pressed the key.</p>
           )}
+          {last?.via === 'cloud-sync' && (
+            <p className="hint">A summary of the batch mirrored to TigerData. Only the fields listed were sent — no page URLs and no page content.</p>
+          )}
+          {last?.via === 'tts' && (
+            <p className="hint">Your standup text was sent to ElevenLabs to be spoken. The text itself is not kept here, only its length. &quot;cache&quot; means nothing left the device.</p>
+          )}
           <pre className="ai-request-json">{last ? JSON.stringify(last.record, null, 2) : 'Nothing has been sent off this device yet.'}</pre>
         </>
       )}
