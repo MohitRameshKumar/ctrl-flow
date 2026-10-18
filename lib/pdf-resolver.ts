@@ -139,6 +139,20 @@ function toHttps(url: string): string {
   return url.replace(/^http:\/\//i, 'https://');
 }
 
+class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
+
+/** One word for the log: `http 429`, or `error (message)` for anything that is not an HTTP status. */
+function describeFailure(err: unknown): string {
+  if (err instanceof HttpError) return `http ${err.status}`;
+  return `error (${err instanceof Error ? err.message : String(err)})`;
+}
+
 async function timedFetch(deps: Deps, deadline: number, url: string, init: RequestInit = {}): Promise<Response> {
   const now = deps.now ?? Date.now;
   const remaining = deadline - now();
@@ -146,7 +160,11 @@ async function timedFetch(deps: Deps, deadline: number, url: string, init: Reque
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS, remaining));
   try {
-    return await deps.fetch(url, { ...init, signal: controller.signal });
+    // Detached on purpose: the native fetch throws "Illegal invocation" in a browser or service worker when
+    // called as a method of another object (`deps.fetch(...)` binds `this` to `deps`). Node does not care,
+    // which is how this shipped past the live check.
+    const doFetch = deps.fetch;
+    return await doFetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -166,24 +184,35 @@ async function readHead(res: Response, bytes: number): Promise<string> {
   }
 }
 
-/** True only if the URL is not a shadow library and really returns a PDF (content-type, or `%PDF` first bytes). */
-export async function verifyPdf(url: string, deps: Deps, deadline: number): Promise<boolean> {
-  if (isShadowLibraryHost(url)) return false;
+export type PdfCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Is this URL a real PDF from a legal host (content-type, or `%PDF` first bytes)? Says why when not, so
+ * the outbound log can show `verify failed (not a PDF (text/html))` instead of a bare "no".
+ */
+export async function checkPdf(url: string, deps: Deps, deadline: number): Promise<PdfCheck> {
+  if (isShadowLibraryHost(url)) return { ok: false, reason: 'blocked host' };
   let res: Response;
   try {
     res = await timedFetch(deps, deadline, toHttps(url), { headers: { Range: 'bytes=0-1023' }, redirect: 'follow' });
-  } catch {
-    return false;
+  } catch (err) {
+    return { ok: false, reason: describeFailure(err) };
   }
   try {
-    if (!(res.ok || res.status === 206)) return false;
-    if (res.url && isShadowLibraryHost(res.url)) return false; // redirected into a blocked host
+    if (!(res.ok || res.status === 206)) return { ok: false, reason: `http ${res.status}` };
+    if (res.url && isShadowLibraryHost(res.url)) return { ok: false, reason: 'redirected to a blocked host' };
     const type = (res.headers.get('content-type') ?? '').toLowerCase();
-    if (type.includes('application/pdf')) return true;
-    return (await readHead(res, 8)).startsWith('%PDF');
+    if (type.includes('application/pdf')) return { ok: true };
+    if ((await readHead(res, 8)).startsWith('%PDF')) return { ok: true };
+    return { ok: false, reason: `not a PDF (${type.split(';')[0] || 'unknown type'})` };
   } finally {
     void res.body?.cancel().catch(() => undefined);
   }
+}
+
+/** True only if the URL is not a shadow library and really returns a PDF. */
+export async function verifyPdf(url: string, deps: Deps, deadline: number): Promise<boolean> {
+  return (await checkPdf(url, deps, deadline)).ok;
 }
 
 // ---- sources ---------------------------------------------------------------------------------------
@@ -196,7 +225,7 @@ export interface Candidate {
 
 async function getJson(deps: Deps, deadline: number, url: string): Promise<unknown> {
   const res = await timedFetch(deps, deadline, url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new HttpError(res.status);
   return res.json();
 }
 
@@ -253,7 +282,7 @@ async function lookup(source: SourceId, title: string, deps: Deps, deadline: num
   switch (source) {
     case 'arxiv': {
       const res = await timedFetch(deps, deadline, `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(`ti:"${title}"`)}&max_results=5`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new HttpError(res.status);
       return parseArxiv(await res.text());
     }
     case 'semantic_scholar': {
@@ -298,7 +327,16 @@ async function lookupDoi(source: SourceId, doi: string, deps: Deps, deadline: nu
 
 export type FindPdfResult =
   | { found: true; source: SourceId; title: string; pdfUrl: string }
-  | { found: false; query: string; searchUrl: string };
+  | {
+      found: false;
+      query: string;
+      searchUrl: string;
+      /**
+       * True when this looks like a fault rather than "no free PDF exists": some source threw (not an HTTP
+       * status), or every lookup failed. The caller then reports an error instead of opening a search.
+       */
+      errored: boolean;
+    };
 
 function orderedSources(preferred: SourceId[] | undefined): SourceId[] {
   const first = (preferred ?? []).filter((s): s is SourceId => DEFAULT_SOURCE_ORDER.includes(s));
@@ -317,35 +355,52 @@ export async function findPdf(selection: string, deps: Deps): Promise<FindPdfRes
   const doi = extractDoi(query);
   const log = deps.log ?? (() => undefined);
 
+  let attempts = 0;
+  let failures = 0;
+  let exceptions = 0;
+  const fail = (source: SourceId, label: string, err: unknown): void => {
+    const text = describeFailure(err);
+    failures++;
+    if (text.startsWith('error')) exceptions++;
+    log({ source, query: label, result: text });
+  };
+
   const tryCandidates = async (source: SourceId, label: string, candidates: Candidate[], needsMatch: boolean): Promise<FindPdfResult | null> => {
-    const ranked = candidates
+    const scored = candidates
       .filter((c) => !isShadowLibraryHost(c.pdfUrl))
-      .map((c) => ({ c, sim: needsMatch ? titleSimilarity(label, c.title) : 1 }))
+      .map((c) => ({ c, sim: needsMatch ? titleSimilarity(label, c.title) : 1 }));
+    const ranked = scored
       .filter((x) => x.sim >= TITLE_MATCH_THRESHOLD)
       .sort((a, b) => b.sim - a.sim)
       .slice(0, MAX_CANDIDATES_TRIED);
     if (ranked.length === 0) {
-      log({ source, query: label, result: candidates.length === 0 ? 'no results' : `${candidates.length} result(s), none matched the title` });
+      const best = scored.reduce((m, x) => Math.max(m, x.sim), 0);
+      log({ source, query: label, result: scored.length === 0 ? 'no match (no results)' : `no match (best score ${best.toFixed(2)})` });
       return null;
     }
+    const reasons: string[] = [];
     for (const { c, sim } of ranked) {
-      if (await verifyPdf(c.pdfUrl, deps, deadline)) {
-        log({ source, query: label, result: `PDF verified (match ${sim.toFixed(2)})` });
+      const check = await checkPdf(c.pdfUrl, deps, deadline);
+      if (check.ok) {
+        log({ source, query: label, result: `found (match ${sim.toFixed(2)})` });
         return { found: true, source, title: c.title, pdfUrl: toHttps(c.pdfUrl) };
       }
+      reasons.push(check.reason);
+      if (check.reason.startsWith('error')) exceptions++;
     }
-    log({ source, query: label, result: 'matched, but no verifiable PDF' });
+    log({ source, query: label, result: `verify failed (${[...new Set(reasons)].join('; ')})` });
     return null;
   };
 
   if (doi) {
     for (const source of sources) {
       if (source !== 'semantic_scholar' && source !== 'openalex') continue;
+      attempts++;
       try {
         const hit = await tryCandidates(source, `doi:${doi}`, await lookupDoi(source, doi, deps, deadline), false);
         if (hit) return hit;
       } catch (err) {
-        log({ source, query: `doi:${doi}`, result: `error: ${err instanceof Error ? err.message : String(err)}` });
+        fail(source, `doi:${doi}`, err);
       }
     }
   }
@@ -357,14 +412,15 @@ export async function findPdf(selection: string, deps: Deps): Promise<FindPdfRes
         log({ source, query: title, result: 'skipped: time limit reached' });
         continue;
       }
+      attempts++;
       try {
         const hit = await tryCandidates(source, title, await lookup(source, title, deps, deadline), true);
         if (hit) return hit;
       } catch (err) {
-        log({ source, query: title, result: `error: ${err instanceof Error ? err.message : String(err)}` });
+        fail(source, title, err);
       }
     }
   }
 
-  return { found: false, query, searchUrl: googleSearchUrl(query) };
+  return { found: false, query, searchUrl: googleSearchUrl(query), errored: exceptions > 0 || (attempts > 0 && failures === attempts) };
 }

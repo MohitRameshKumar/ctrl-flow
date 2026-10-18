@@ -14,7 +14,7 @@ import { getBlocklist, isBlocklisted, isPaused } from './privacy';
 import type { BlocklistConfig } from './types';
 import { cleanSelection } from './selection';
 
-export type FindPdfOutcome = 'downloaded' | 'searched' | 'blocked' | 'paused' | 'empty';
+export type FindPdfOutcome = 'downloaded' | 'searched' | 'error' | 'blocked' | 'paused' | 'empty';
 
 export interface FindPdfOptions {
   /** The tab the user was on. Defaults to the active tab. */
@@ -117,7 +117,8 @@ export async function runFindPdf(opts: FindPdfOptions = {}): Promise<FindPdfOutc
   const ownFlag = !(await isReplayInProgress());
   if (ownFlag) await setReplayInProgress(true);
   try {
-    const result = await findPdf(selection, { fetch, log: (l) => logs.push(l), sourceOrder: await preferredSources() });
+    // An arrow, not the bare `fetch`: the resolver must never call it as a method of another object.
+    const result = await findPdf(selection, { fetch: (input, init) => fetch(input, init), log: (l) => logs.push(l), sourceOrder: await preferredSources() });
 
     if (result.found) {
       const name = SOURCE_NAMES[result.source];
@@ -135,6 +136,13 @@ export async function runFindPdf(opts: FindPdfOptions = {}): Promise<FindPdfOutc
       return 'downloaded';
     }
 
+    if (result.errored) {
+      // A fault (a source threw, or every lookup failed) is not the same as "no free PDF exists": say so
+      // instead of quietly opening a search.
+      await recordOutbound({ ts: Date.now(), kind: 'pdf-lookup', lookups: logs, outcome: 'error: see the lookups above' });
+      await tell('Find PDF error', 'Something went wrong. See Settings → General → Show last outbound request.');
+      return 'error';
+    }
     await chrome.tabs.create({ url: result.searchUrl });
     await recordOutbound({ ts: Date.now(), kind: 'pdf-lookup', lookups: logs, outcome: 'no free PDF found; opened a search' });
     await tell('No free PDF found', 'Opened a search.');

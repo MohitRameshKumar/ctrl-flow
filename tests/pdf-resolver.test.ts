@@ -171,8 +171,9 @@ describe('source order and stopping at the first PDF', () => {
     expect(result).toMatchObject({ found: true, source: 'openalex' });
     expect(logs.map((l) => l.source)).toEqual(['arxiv', 'semantic_scholar', 'openalex']);
     expect(logs.map((l) => l.query)).toEqual([TITLE, TITLE, TITLE]); // only the title was sent
-    expect(logs[1]!.result).toMatch(/none matched/);
-    expect(logs[2]!.result).toMatch(/verified/);
+    expect(logs[0]!.result).toBe('no match (no results)');
+    expect(logs[1]!.result).toMatch(/^no match \(best score 0\.\d\d\)$/);
+    expect(logs[2]!.result).toMatch(/^found \(match 1\.00\)$/);
   });
 
   it('skips a matching title whose PDF does not verify and moves on', async () => {
@@ -213,9 +214,10 @@ describe('source order and stopping at the first PDF', () => {
 
 describe('not found, errors and limits', () => {
   it('no free PDF: reports a quoted Google search instead', async () => {
-    const { fetch } = mockFetch([]);
+    // every source answers 200 with an empty result list: "nothing exists", not a fault
+    const { fetch } = mockFetch([['', () => json({ data: [], results: [], response: { docs: [] } })]]);
     const result = await findPdf('Zzyzx quantum marmalade theorem', { fetch });
-    expect(result).toEqual({ found: false, query: 'Zzyzx quantum marmalade theorem', searchUrl: googleSearchUrl('Zzyzx quantum marmalade theorem') });
+    expect(result).toEqual({ found: false, query: 'Zzyzx quantum marmalade theorem', searchUrl: googleSearchUrl('Zzyzx quantum marmalade theorem'), errored: false });
   });
 
   it('a failing source (rate limit, outage) is logged and skipped, not fatal', async () => {
@@ -228,8 +230,8 @@ describe('not found, errors and limits', () => {
     ]);
     const result = await findPdf(TITLE, { fetch, log: (l) => logs.push(l) });
     expect(result).toMatchObject({ found: true, source: 'openalex' });
-    expect(logs[0]!.result).toBe('error: HTTP 503');
-    expect(logs[1]!.result).toBe('error: HTTP 429');
+    expect(logs[0]!.result).toBe('http 503');
+    expect(logs[1]!.result).toBe('http 429');
   });
 
   it('a hanging request is cut off by the per-request timeout, and the run still finishes', async () => {
@@ -264,5 +266,66 @@ describe('arXiv feed parsing', () => {
     expect(parseArxiv(arxivXml(TITLE))).toEqual([{ title: TITLE, pdfUrl: 'https://arxiv.org/pdf/1706.03762v7', source: 'arxiv' }]);
     const noLink = '<feed><entry><id>http://arxiv.org/abs/2001.00001v1</id><title>T &amp; U</title></entry></feed>';
     expect(parseArxiv(noLink)).toEqual([{ title: 'T & U', pdfUrl: 'https://arxiv.org/pdf/2001.00001v1', source: 'arxiv' }]);
+  });
+});
+
+describe('every source logs a specific outcome, and faults are told apart from "nothing found"', () => {
+  const run = async (routes: [string, () => Response | Promise<Response>][], title = TITLE) => {
+    const logs: LookupLog[] = [];
+    const { fetch } = mockFetch(routes as [string, Route][]);
+    const result = await findPdf(title, { fetch, log: (l) => logs.push(l) });
+    return { logs, result };
+  };
+  const none = () => json({ data: [], results: [], response: { docs: [] } });
+
+  it('http NNN, error (message), no match (…), verify failed (…) and found (…) are all distinguishable', async () => {
+    const { logs } = await run([
+      ['export.arxiv.org', () => xml(arxivXml(TITLE))],
+      ['arxiv.org/pdf', () => new Response('<html>login</html>', { headers: { 'content-type': 'text/html; charset=utf-8' } })],
+      ['semanticscholar.org', () => new Response('{}', { status: 429 })],
+      ['api.openalex.org', () => Promise.reject(new TypeError('Failed to fetch'))],
+      ['archive.org/advancedsearch', () => json({ response: { docs: [{ identifier: 'x', title: 'Completely Unrelated Book' }] } })],
+    ]);
+    expect(logs.map((l) => [l.source, l.result])).toEqual([
+      ['arxiv', 'verify failed (not a PDF (text/html))'],
+      ['semantic_scholar', 'http 429'],
+      ['openalex', 'error (Failed to fetch)'],
+      ['internet_archive', 'no match (no results)'],
+    ]);
+  });
+
+  it('a verification that fails for a network reason says so', async () => {
+    const { logs } = await run([
+      ['export.arxiv.org', () => xml(arxivXml(TITLE))],
+      ['arxiv.org/pdf', () => Promise.reject(new Error('net::ERR_CONNECTION_RESET'))],
+    ]);
+    expect(logs[0]!.result).toBe('verify failed (error (net::ERR_CONNECTION_RESET))');
+  });
+
+  it('nothing exists anywhere: not an error, so the caller opens a search', async () => {
+    const { result } = await run([['', none]]);
+    expect(result).toMatchObject({ found: false, errored: false });
+  });
+
+  it('rate limits on some sources while the others simply have no match: still not an error', async () => {
+    const { result } = await run([
+      ['semanticscholar.org', () => new Response('{}', { status: 429 })],
+      ['', none],
+    ]);
+    expect(result).toMatchObject({ found: false, errored: false });
+  });
+
+  it('a source that throws (not an HTTP status) is a fault, even if the others find nothing', async () => {
+    const { result } = await run([
+      ['export.arxiv.org', () => Promise.reject(new TypeError("Illegal invocation"))],
+      ['', none],
+    ]);
+    expect(result).toMatchObject({ found: false, errored: true });
+  });
+
+  it('every lookup failing (offline, blocked) is a fault too', async () => {
+    const { result, logs } = await run([['', () => new Response('x', { status: 503 })]]);
+    expect(logs.every((l) => l.result === 'http 503')).toBe(true);
+    expect(result).toMatchObject({ found: false, errored: true });
   });
 });
