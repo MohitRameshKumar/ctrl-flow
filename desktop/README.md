@@ -1,4 +1,4 @@
-# Cadence Desktop
+# Ctrl-flow Desktop
 
 A downloadable Win/macOS app that replaces the Chrome extension. It launches the user's real
 installed Chrome with a debugging port and drives it over the Chrome DevTools Protocol, so there is
