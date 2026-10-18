@@ -9,7 +9,7 @@ export interface HeaderProps {
 export function Header({ paused, todayCount, onTogglePause }: HeaderProps) {
   return (
     <header className="app-header">
-      <div className="app-title">ctrl-flow</div>
+      <div className="app-logo" role="img" aria-label="ctrl-flow" />
       <div className="app-header-right">
         <span
           className={paused ? 'rec paused' : 'rec'}
