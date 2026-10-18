@@ -40,6 +40,9 @@ export default defineConfig({
       'scripting',
       // chrome.sidePanel.open() needs this declared; WXT may add it too, duplicates are fine.
       'sidePanel',
+      // Find PDF: save the PDF it finds, and the notification's "Open" button.
+      'downloads',
+      'downloads.open',
     ],
     host_permissions: ['<all_urls>'],
     incognito: 'not_allowed',
