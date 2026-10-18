@@ -1173,3 +1173,82 @@ button.keycap:hover:not(:disabled) {
   align-items: center;
   gap: var(--s2);
 }
+
+/* ---- Focus Flip ----------------------------------------------------------------------------- */
+
+.flip-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--s2);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--t-sm);
+}
+
+.flip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex: none;
+}
+
+.flip-status.cycling {
+  color: var(--ink);
+}
+
+.flip-status.cycling .flip-dot {
+  background: var(--ok);
+}
+
+.flip-status.paused-other-tab .flip-dot,
+.flip-status.paused-recording .flip-dot,
+.flip-status.paused-macro .flip-dot {
+  background: var(--warn);
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 1fr 96px 44px;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-sm);
+}
+
+.slider-label {
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.slider-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.slider-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.pair-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pair-current {
+  max-width: 34%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  font-size: var(--t-sm);
+}
+
+.pair-row select {
+  flex: 1;
+  min-width: 0;
+}

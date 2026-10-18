@@ -1,63 +1,29 @@
-// Focus Flip: opt-in automatic flipping between a writing tab and a reference tab.
+// Focus Flip: opt-in, continuous flipping between a writing tab and a reference tab.
 //
-// OFF by default. The side-panel toggle (storage key `focusFlipEnabled`) is the user's approval;
-// while it is off nothing is learned, no activity pulses are even sent by the content script, and
-// nothing flips. All state is counts and timestamps: URLs, tab ids, durations. Never keys, scroll
-// positions, or page content.
+// OFF by default. The side-panel toggle (storage key `focusFlipEnabled`) is the user's approval; while
+// it is off nothing is learned, the content script sends nothing, and nothing flips. All state is
+// counts, timestamps and URLs: never keys, scroll positions, or page content.
 //
-// MV3 notes: the service worker can sleep, so durable state (tracker, flip-in-progress) lives in
-// chrome.storage.session. The 2–10 s typing-pause timer is a plain setTimeout — keystroke pulses
-// keep the worker alive for that long. The return timer (3–60 s) has three layers: a setTimeout, a
-// keep-alive ping every 20 s while a flip is running, and a chrome.alarms backup that resumes the
-// flip if the worker was killed anyway (alarms fire with 30 s granularity, so it is only a net).
+// Idle is measured in the page (see createFocusFlipPulses in entrypoints/content.ts), from the real
+// last event, and arrives here as `activity_idle`. This file only decides (flip-cycle.ts) and acts;
+// it holds no timers, so a sleeping service worker costs nothing: the idle message wakes it.
 import { getFlipPair, getFlipPairs, putFlipPair } from './db';
-import {
-  EMPTY_TRACKER,
-  applyRoundTrip,
-  emptyPair,
-  learnedDwellMs,
-  learnedPauseMs,
-  onKey,
-  onUserActivation,
-  type RoundTrip,
-  type TrackerState,
-} from './flip-learning';
+import { EMPTY_TRACKER, applyRoundTrip, emptyPair, onKey, onUserActivation, type RoundTrip, type TrackerState } from './flip-learning';
+import { decideFlip, type CycleTab, type FlipDecision, type IdleKind } from './flip-cycle';
 import { normalizeUrl } from './normalize';
 import { isReplayInProgress } from './macro-run-channel';
 import { markProgrammaticNav } from './programmatic';
 import { getBlocklist, isBlocklisted, isPaused } from './privacy';
 
 export const FOCUS_FLIP_KEY = 'focusFlipEnabled';
-export const FLIP_RETURN_ALARM = 'cadence-flip-return';
+/** Alarm used by the old return-timer model; cleared on startup in case an install still has one. */
+export const LEGACY_FLIP_RETURN_ALARM = 'cadence-flip-return';
 const TRACKER_KEY = 'flipTracker';
 const SENSITIVE_KEY = 'flipSensitive';
-const FLIP_STATE_KEY = 'flipState';
-
-/** Don't flip if the user switched tabs themselves this recently. */
-export const RECENT_USER_SWITCH_MS = 5000;
-/** Ignore reference-tab interaction right after a flip starts (page-load / scroll-restore noise). */
-const INTERACTION_GRACE_MS = 700;
-/** A return that is this late (worker was asleep) is dropped rather than yanking the user around. */
-const STALE_RETURN_MS = 10000;
-const KEEPALIVE_MS = 20000;
-
-export interface FlipState {
-  id: string;
-  writingTabId: number;
-  referenceTabId: number;
-  startedAt: number;
-  returnAt: number;
-  dwellMs: number;
-}
 
 export async function isFocusFlipEnabled(): Promise<boolean> {
   const { [FOCUS_FLIP_KEY]: enabled } = await chrome.storage.local.get<Record<string, boolean | undefined>>(FOCUS_FLIP_KEY);
   return enabled === true;
-}
-
-export async function getFlipState(): Promise<FlipState | null> {
-  const { [FLIP_STATE_KEY]: state } = await chrome.storage.session.get<Record<string, FlipState | undefined>>(FLIP_STATE_KEY);
-  return state ?? null;
 }
 
 // ---- serialized session-state access (messages arrive concurrently) -----------------------------
@@ -88,29 +54,18 @@ let focusProbe: boolean | null = null;
 export function setFocusProbeForTests(focused: boolean | null): void {
   focusProbe = focused;
 }
-async function isChromeFocused(): Promise<boolean> {
+/** Chrome has focus *and* the tab's own window is the focused one. */
+async function isChromeFocusedOn(windowId: number | undefined): Promise<boolean> {
   if (focusProbe !== null) return focusProbe;
   try {
-    return (await chrome.windows.getLastFocused()).focused === true;
+    const win = await chrome.windows.getLastFocused();
+    return win.focused === true && (windowId === undefined || win.id === windowId);
   } catch {
     return false;
   }
 }
 
-// ---- timers (per worker lifetime) ----------------------------------------------------------------
-
-let checkTimer: ReturnType<typeof setTimeout> | undefined;
-let returnTimer: ReturnType<typeof setTimeout> | undefined;
-let keepAlive: ReturnType<typeof setInterval> | undefined;
-
-function clearFlipTimers(): void {
-  if (returnTimer) clearTimeout(returnTimer);
-  if (keepAlive) clearInterval(keepAlive);
-  returnTimer = undefined;
-  keepAlive = undefined;
-}
-
-// ---- learning ------------------------------------------------------------------------------------
+// ---- learning (pairs) ----------------------------------------------------------------------------
 
 async function tabIsTrackable(url: string | undefined): Promise<string | null> {
   const normalized = normalizeUrl(url);
@@ -130,9 +85,8 @@ async function learn(trip: RoundTrip): Promise<void> {
   await putFlipPair(applyRoundTrip(existing, trip, demoMode));
 }
 
-/** A user-initiated tab activation (callers skip Cadence-initiated ones). Cancels a running flip. */
+/** A user-initiated tab activation (callers skip ctrl-flow-initiated ones, so a flip never teaches itself). */
 export async function handleUserActivation(tabId: number, rawUrl: string | undefined): Promise<void> {
-  await cancelFlip();
   if (!(await isFocusFlipEnabled()) || (await isPaused())) return;
   const url = await tabIsTrackable(rawUrl);
   if (!url) {
@@ -148,27 +102,11 @@ export async function handleUserActivation(tabId: number, rawUrl: string | undef
   if (trip) await learn(trip);
 }
 
-/** Content-script pulses: keystroke / scroll / click happened (no details). */
-export async function handleActivity(tabId: number, what: 'key' | 'scroll' | 'click'): Promise<void> {
+/** Start of a burst of typing / scrolling / clicking in a tab (no details). Feeds pair learning only. */
+export async function handleActivity(tabId: number, what: IdleKind, ts: number): Promise<void> {
   if (!(await isFocusFlipEnabled()) || (await isPaused())) return;
-  // Pulses produced while a macro replays are Cadence's own clicks/typing, not the user's.
-  if (await isReplayInProgress()) return;
-  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-  const url = await tabIsTrackable(tab?.url);
-  if (!tab || !url) return;
-  const now = Date.now();
-
-  const flip = await getFlipState();
-  if (flip && tabId === flip.referenceTabId && now - flip.startedAt > INTERACTION_GRACE_MS) {
-    // The user is reading on purpose: scrolling, clicking or typing in the reference tab.
-    await cancelFlip();
-    return;
-  }
-
-  if (what === 'key') {
-    await serial(async () => writeTracker(onKey(await readTracker(), tabId, now, true)));
-    await scheduleCheck(tabId, url, now);
-  }
+  if (await isReplayInProgress()) return; // ctrl-flow's own clicks / typing during a replay
+  if (what === 'key') await serial(async () => writeTracker(onKey(await readTracker(), tabId, ts, true)));
 }
 
 export async function handleSensitiveFocus(tabId: number, value: boolean): Promise<void> {
@@ -182,8 +120,6 @@ export async function handleSensitiveFocus(tabId: number, value: boolean): Promi
 }
 
 export async function handleTabRemoved(tabId: number): Promise<void> {
-  const flip = await getFlipState();
-  if (flip && (flip.writingTabId === tabId || flip.referenceTabId === tabId)) await cancelFlip();
   await serial(async () => {
     const map = await readSensitive();
     if (map[tabId]) {
@@ -193,125 +129,76 @@ export async function handleTabRemoved(tabId: number): Promise<void> {
   });
 }
 
-// ---- flipping ------------------------------------------------------------------------------------
+// ---- the cycle -----------------------------------------------------------------------------------
 
-async function scheduleCheck(tabId: number, url: string, keyTs: number): Promise<void> {
-  if (checkTimer) clearTimeout(checkTimer);
-  checkTimer = undefined;
-  const pairs = (await getFlipPairs()).filter((p) => p.active && p.writingUrl === url);
-  if (pairs.length === 0) return;
-  const pause = Math.min(...pairs.map(learnedPauseMs));
-  checkTimer = setTimeout(() => {
-    checkFlip(tabId, keyTs).catch((err) => console.error('[cadence] flip check failed', err));
-  }, pause);
-}
-
-/** Starts a flip if — and only if — every safety condition holds. Returns whether it flipped. */
-export async function checkFlip(writingTabId: number, keyTs: number): Promise<boolean> {
-  if (!(await isFocusFlipEnabled()) || (await isPaused())) return false;
-  // A macro replay drives tabs on its own: never steal focus into a reference tab mid-run.
-  if (await isReplayInProgress()) return false;
-  if (await getFlipState()) return false;
-
-  const tracker = await readTracker();
-  if (tracker.lastKey[writingTabId] !== keyTs) return false; // typed again since
-
-  const lastSwitch = tracker.trail[tracker.trail.length - 1];
-  if (lastSwitch && Date.now() - lastSwitch.ts < RECENT_USER_SWITCH_MS) return false;
-
-  if (!(await isChromeFocused())) return false;
-
-  const writing = await chrome.tabs.get(writingTabId).catch(() => undefined);
-  if (!writing || writing.incognito || !writing.active) return false;
-  const [activeTab] = await chrome.tabs.query({ active: true, windowId: writing.windowId });
-  if (activeTab?.id !== writingTabId) return false;
-
-  const writingUrl = await tabIsTrackable(writing.url);
-  if (!writingUrl) return false;
-  if ((await readSensitive())[writingTabId]) return false;
-
-  const pairs = (await getFlipPairs())
-    .filter((p) => p.active && p.writingUrl === writingUrl)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  const tabs = await chrome.tabs.query({});
-  for (const pair of pairs) {
-    const reference = tabs
-      .filter((t) => t.id !== undefined && t.id !== writingTabId && !t.incognito && normalizeUrl(t.url)?.url === pair.referenceUrl)
-      .sort((a, b) => Number(b.windowId === writing.windowId) - Number(a.windowId === writing.windowId))[0];
-    if (!reference?.id) continue;
-    if (!(await tabIsTrackable(reference.url))) continue;
-    await startFlip(writingTabId, reference.id, learnedDwellMs(pair));
-    return true;
+async function flippableTabs(): Promise<CycleTab[]> {
+  const out: CycleTab[] = [];
+  for (const t of await chrome.tabs.query({})) {
+    if (t.id === undefined || t.incognito) continue;
+    const url = await tabIsTrackable(t.url);
+    if (url) out.push({ id: t.id, url, windowId: t.windowId, active: t.active });
   }
-  return false;
+  return out;
 }
 
-async function startFlip(writingTabId: number, referenceTabId: number, dwellMs: number): Promise<void> {
-  if (await isReplayInProgress()) return; // last line of defence: the flip itself, not just its triggers
-  const now = Date.now();
-  const state: FlipState = {
-    id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
-    writingTabId,
-    referenceTabId,
-    startedAt: now,
-    returnAt: now + dwellMs,
-    dwellMs,
-  };
-  await chrome.storage.session.set({ [FLIP_STATE_KEY]: state });
+/**
+ * The page reports that typing (writing tab) or scrolling / clicking (reference tab) has stopped for
+ * the configured delay. Flips to the paired tab if every rule in `decideFlip` allows it.
+ */
+export async function handleIdle(tabId: number, what: IdleKind): Promise<FlipDecision> {
+  const [enabled, appPaused, replaying, tab] = await Promise.all([
+    isFocusFlipEnabled(),
+    isPaused(),
+    isReplayInProgress(),
+    chrome.tabs.get(tabId).catch(() => undefined),
+  ]);
+  if (!enabled) return { flip: false, reason: 'off' };
+  const url = tab && !tab.incognito ? await tabIsTrackable(tab.url) : null;
+  if (!tab || !url) return { flip: false, reason: 'no-pair' };
+
+  const decision = decideFlip({
+    enabled,
+    appPaused,
+    replaying,
+    chromeFocused: await isChromeFocusedOn(tab.windowId),
+    sensitiveTabIds: Object.keys(await readSensitive()).map(Number),
+    tab: { id: tabId, url, windowId: tab.windowId, active: tab.active },
+    kind: what,
+    pairs: await getFlipPairs(),
+    openTabs: await flippableTabs(),
+  });
+  if (decision.flip) await performFlip(decision.toTabId, tab.windowId);
+  return decision;
+}
+
+/** Switches tabs as a ctrl-flow action: marked, so it never feeds Spaces, co-usage, the switch offer, macros or learning. */
+async function performFlip(toTabId: number, fromWindowId: number | undefined): Promise<void> {
   try {
-    await markProgrammaticNav(referenceTabId);
-    await chrome.tabs.update(referenceTabId, { active: true });
+    await markProgrammaticNav(toTabId);
+    const target = await chrome.tabs.update(toTabId, { active: true });
+    if (target?.windowId !== undefined && target.windowId !== fromWindowId) {
+      await chrome.windows.update(target.windowId, { focused: true });
+    }
   } catch {
-    await chrome.storage.session.remove(FLIP_STATE_KEY);
-    return;
+    /* the tab closed between the decision and the switch */
   }
-  clearFlipTimers();
-  returnTimer = setTimeout(() => {
-    finishFlip(state.id).catch((err) => console.error('[cadence] flip return failed', err));
-  }, dwellMs);
-  keepAlive = setInterval(() => {
-    chrome.runtime.getPlatformInfo().catch(() => undefined); // any extension API call resets the idle timer
-  }, KEEPALIVE_MS);
-  chrome.alarms.create(FLIP_RETURN_ALARM, { when: state.returnAt });
 }
 
-async function endFlipBookkeeping(): Promise<void> {
-  clearFlipTimers();
-  await chrome.storage.session.remove(FLIP_STATE_KEY);
-  await chrome.alarms.clear(FLIP_RETURN_ALARM);
+// ---- manual pairing ------------------------------------------------------------------------------
+
+/** "Pair current tab with…": makes (writing, reference) an active pair immediately, no learning needed. */
+export async function pairTabs(writingTabId: number, referenceTabId: number): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const [writing, reference] = await Promise.all([chrome.tabs.get(writingTabId).catch(() => undefined), chrome.tabs.get(referenceTabId).catch(() => undefined)]);
+  const writingUrl = await tabIsTrackable(writing?.url);
+  const referenceUrl = await tabIsTrackable(reference?.url);
+  if (!writingUrl || !referenceUrl) return { ok: false, reason: 'Both tabs must be ordinary web pages that are not on your excluded sites.' };
+  if (writingUrl === referenceUrl) return { ok: false, reason: 'Pick a different page.' };
+  const existing = (await getFlipPair(writingUrl, referenceUrl)) ?? emptyPair(writingUrl, referenceUrl);
+  await putFlipPair({ ...existing, active: true, manual: true, updatedAt: Date.now() });
+  return { ok: true };
 }
 
-/** Returns to the writing tab, unless the flip was cancelled (state gone / different flip). */
-export async function finishFlip(id: string): Promise<void> {
-  const state = await getFlipState();
-  if (!state || state.id !== id) return;
-  await endFlipBookkeeping();
-  if (!(await isFocusFlipEnabled()) || Date.now() - state.returnAt > STALE_RETURN_MS) return;
-
-  const writing = await chrome.tabs.get(state.writingTabId).catch(() => undefined);
-  const reference = await chrome.tabs.get(state.referenceTabId).catch(() => undefined);
-  if (!writing || !reference?.active) return; // closed, or the user already moved on
-  await markProgrammaticNav(state.writingTabId);
-  await chrome.tabs.update(state.writingTabId, { active: true });
-}
-
-/** chrome.alarms backup (and startup check): complete a flip whose timer died with the worker. */
-export async function resumeFlipIfDue(): Promise<void> {
-  const state = await getFlipState();
-  if (state && Date.now() >= state.returnAt) await finishFlip(state.id);
-}
-
-/** Stops a flip in progress without switching tabs. Used by "Stay here", interaction, user switches, toggle-off. */
-export async function cancelFlip(): Promise<void> {
-  const state = await getFlipState();
-  if (!state) return;
-  await endFlipBookkeeping();
-}
-
-/** Called when the toggle is turned off: stop everything and forget in-memory/session learning state. */
+/** Called when the toggle is turned off: forget session learning state. The pages stop sending on their own. */
 export async function disableFocusFlip(): Promise<void> {
-  if (checkTimer) clearTimeout(checkTimer);
-  checkTimer = undefined;
-  await cancelFlip();
   await chrome.storage.session.remove([TRACKER_KEY, SENSITIVE_KEY]);
 }

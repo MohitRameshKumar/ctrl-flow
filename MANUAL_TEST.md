@@ -59,19 +59,18 @@ Useful tools: service-worker console (extensions page → ctrl-flow → *service
 5. [ ] Press the leader key, then the space's letter.
    **Expected:** that space's group is restored/focused. The activation is **not** learned as your own switch.
 
-## 5. Focus Flip
-1. [ ] Focus Flip section → enable it.
-   **Expected:** toggle on; it was off by default.
-2. [ ] Repeat several times: type in a "writing" tab, flip to a "reference" tab, return and keep typing (needs 2–3 round trips; demo mode needs fewer).
-   **Expected:** a learned pair appears in the pairs list.
-3. [ ] Type in the writing tab, then stop typing for the learned pause.
-   **Expected:** ctrl-flow flips to the reference tab, then returns to the writing tab.
-4. [ ] While flipped, scroll or click in the reference tab.
-   **Expected:** the flip is cancelled and you stay put.
-5. [ ] Press Leader **S** during a flip.
-   **Expected:** the flip stops immediately.
-6. [ ] **During a macro replay** (see §6.7): type in the writing tab.
-   **Expected:** Focus Flip never starts while the macro runs.
+## 5. Focus Flip (continuous cycle)
+1. [ ] Settings → Focus Flip → turn it on. **Expected:** the status reads "Focus Flip: on · no pair yet".
+2. [ ] Open a doc (writing) and an article (reference). In the doc tab, open Settings → *Pair current tab* → pick the article → **Pair**. (Or switch between them a few times while typing in the doc to learn a pair.) **Expected:** the status reads "Focus Flip: <Doc> ↔ <Article> · cycling" while you are on either tab.
+3. [ ] In the doc, type, then stop. **Expected:** about 1.5 s after your last keystroke it flips to the article. Typing continuously never flips.
+4. [ ] In the article, scroll (or click), then stop. **Expected:** about 1.5 s later it flips back to the doc. It does not matter how long you scrolled.
+5. [ ] Repeat for several cycles. **Expected:** it keeps cycling; nothing flips when you arrive and do nothing.
+6. [ ] Go to a third tab and type and scroll there. **Expected:** no flips; the status says "paused (on another tab)". Return to the doc or the article and act again. **Expected:** the cycle resumes.
+7. [ ] Change *Flip to reference after typing stops* to 3.0 s and *Flip back after scrolling stops* to 0.5 s. **Expected:** the next flips use those delays.
+8. [ ] Pause recording (header), or start a macro. **Expected:** no flips; the status explains why. Focus a password field in the doc: no flip.
+9. [ ] Turn the toggle off mid-cycle. **Expected:** nothing more flips and you stay on the current tab.
+10. [ ] After cycling, open Spaces and Macros. **Expected:** no "Switch to …?" offer, no new macro suggestion, and no new space letters or co-usage from the flips. The debug event list marks the flip switches `programmatic`.
+11. [ ] No typed text or scroll positions appear in the debug event list or exports (only counts and timestamps).
 
 ## 6. Macros (Repeat-to-Macro)
 **Prep:** Settings → turn **Demo mode** on (lower thresholds: 2 runs, 1 day). Macro playback → *Guided — watch it work*.

@@ -33,15 +33,14 @@ import {
 } from '@/lib/macros';
 import { SPACE_RECOMPUTE_ALARM, SWITCH_CHECK_ALARM, checkAndOfferSwitch, recomputeSpaces } from '@/lib/spaces';
 import {
-  FLIP_RETURN_ALARM,
   FOCUS_FLIP_KEY,
-  cancelFlip,
+  LEGACY_FLIP_RETURN_ALARM,
   disableFocusFlip,
   handleActivity,
+  handleIdle,
   handleSensitiveFocus,
   handleTabRemoved,
   handleUserActivation,
-  resumeFlipIfDue,
 } from '@/lib/focus-flip';
 import { cancelRepeat, confirmRepeat, runMacroSlot } from '@/lib/macro-leaders';
 import { handleLeaderCommand, registerBuiltinLeaders, syncLetters, runLeaderLetter, runSearchItem } from '@/lib/leader';
@@ -354,7 +353,10 @@ async function handleContentMessage(
       });
       return;
     case 'activity':
-      if (tab?.id !== undefined) await handleActivity(tab.id, message.what);
+      if (tab?.id !== undefined) await handleActivity(tab.id, message.what, message.ts);
+      return;
+    case 'activity_idle':
+      if (tab?.id !== undefined) await handleIdle(tab.id, message.what);
       return;
     case 'sensitive_focus':
       if (tab?.id !== undefined) await handleSensitiveFocus(tab.id, message.value);
@@ -410,11 +412,6 @@ async function handleAlarm(name: string): Promise<void> {
     return;
   }
 
-  if (name === FLIP_RETURN_ALARM) {
-    await resumeFlipIfDue();
-    return;
-  }
-
   if (name === MACRO_RECOMPUTE_ALARM) {
     await runMacroRecompute();
     return;
@@ -440,6 +437,7 @@ export default defineBackground(() => {
   );
 
   registerBuiltinLeaders();
+  chrome.alarms.clear(LEGACY_FLIP_RETURN_ALARM).catch(() => undefined); // the old return-timer model is gone
   // Letters live on macro / space rows; re-validate them on every worker start.
   syncLetters().catch((err) => console.error('[cadence] letter sync failed', err));
   updateBadge().catch((err) => console.error('[cadence] badge failed', err));
@@ -583,9 +581,6 @@ export default defineBackground(() => {
     if (area === 'local' && changes[FOCUS_FLIP_KEY] && changes[FOCUS_FLIP_KEY].newValue !== true) {
       disableFocusFlip().catch((err) => console.error('[cadence] disabling focus flip failed', err));
     }
-    if (area === 'local' && changes.paused?.newValue === true) {
-      cancelFlip().catch((err) => console.error('[cadence] cancel flip on pause failed', err));
-    }
     if (area === 'local' && changes.paused) {
       updateBadge().catch((err) => console.error('[cadence] badge failed', err));
     }
@@ -596,7 +591,6 @@ export default defineBackground(() => {
 
   chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
-      cancelFlip().catch((err) => console.error('[cadence] cancel flip on blur failed', err));
       writeEvent({ kind: 'chrome_focus_lost' }).catch((err) =>
         console.error('[cadence] focus event failed', err),
       );

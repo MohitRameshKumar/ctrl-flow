@@ -11,7 +11,7 @@ export function SettingsTab(props: SettingsPanelProps) {
       <Group title="Shortcuts">
         <LeaderKeysSection />
       </Group>
-      <Group title="Focus Flip" defaultOpen={false}>
+      <Group title="Focus Flip">
         <FocusFlipSection />
       </Group>
       <Group title="Privacy">

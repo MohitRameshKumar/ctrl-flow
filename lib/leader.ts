@@ -1,7 +1,6 @@
 // Background side of the leader key: built-in letters, saved-space letters, running a letter, and
 // opening the overlay (or the side-panel fallback on pages content scripts can't run on).
 import { getMacros, getRituals, getSpaces, setMacroLetterRow, setSpaceLetterRow } from './db';
-import { cancelFlip } from './focus-flip';
 import {
   buildMenu,
   canHostOverlay,
@@ -68,11 +67,10 @@ export function registerBuiltinLeaders(): void {
   registerLeader({
     id: 'stop',
     letter: 's',
-    label: 'Stop what ctrl-flow is doing',
+    label: 'Stop the running macro',
     short: 'Stop',
-    description: 'Stop a running macro or Focus Flip',
+    description: 'Stop a running macro',
     run: async () => {
-      await cancelFlip(); // a Focus Flip in progress
       await stopRunningMacro(); // a macro replay in progress
     },
   });

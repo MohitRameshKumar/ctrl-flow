@@ -42,7 +42,9 @@ export type ContentMessage =
     }
   | { type: 'typing_burst'; keyCount: number }
   /** Focus Flip only (and only while enabled): "something happened" pulses, throttled. Carry no positions, keys, or content. */
-  | { type: 'activity'; what: 'key' | 'scroll' | 'click' }
+  | { type: 'activity'; what: 'key' | 'scroll' | 'click'; ts: number }
+  /** Typing (or scrolling / clicking) stopped for the flip delay; `ts` is the real last event. */
+  | { type: 'activity_idle'; what: 'key' | 'scroll' | 'click'; ts: number }
   | { type: 'sensitive_focus'; value: boolean }
   /** Leader-key overlay (or the panel fallback) asking the background to run a letter / a search result. */
   | { type: 'leader_run'; letter: string }
@@ -63,6 +65,8 @@ export interface FlipPair {
   /** Last few ms between the last keystroke and leaving the writing tab. */
   pauseSamples: number[];
   active: boolean;
+  /** Set by "Pair current tab with…": active immediately, no learning needed. */
+  manual?: boolean;
   updatedAt: number;
 }
 
