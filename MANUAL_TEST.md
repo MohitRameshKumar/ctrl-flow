@@ -1,4 +1,4 @@
-# Cadence — manual test script
+# ctrl-flow — manual test script
 
 Run in demo order, in Chrome. Each step: what to do, then **Expected:**. Tick as you go.
 Where a label is paraphrased below, match it by meaning, not exact text.
@@ -7,19 +7,19 @@ Where a label is paraphrased below, match it by meaning, not exact text.
 Open a normal `https://` page (not `chrome://`). Keep the side panel open (click the toolbar icon).
 Debug page: `chrome-extension://<id>/debug.html` (id is on the extensions page).
 
-Useful tools: service-worker console (extensions page → Cadence → *service worker*), and the debug page for event counts.
+Useful tools: service-worker console (extensions page → ctrl-flow → *service worker*), and the debug page for event counts.
 
 ---
 
 ## 1. Reload and health
-1. [ ] On `chrome://extensions`, click **Reload** on Cadence.
+1. [ ] On `chrome://extensions`, click **Reload** on ctrl-flow.
    **Expected:** no red *Errors* button on the card. No "Status code: 15" / service-worker registration failure.
 2. [ ] Open the service-worker console.
    **Expected:** no uncaught errors; no `[cadence] ... failed` lines on startup.
 3. [ ] Click the toolbar icon.
    **Expected:** side panel opens with tabs **Rituals · Spaces · Macros · Standup**, then sections Focus Flip, Leader keys, Privacy, Settings.
 4. [ ] `chrome://extensions/shortcuts`.
-   **Expected:** two Cadence commands listed: *open the leader-key menu* (Ctrl/⌘+Shift+Space) and *open the macro palette* (Ctrl/⌘+Shift+Y).
+   **Expected:** six ctrl-flow commands: *open the leader-key menu* (Ctrl/⌘+Shift+Y by default), *open the macro palette* and *run macro slot 1–4* (no default keys; bind them here).
 5. [ ] DevTools → Application → IndexedDB → `cadence`.
    **Expected:** database version 60 (IndexedDB shows Dexie's version ×10, i.e. Dexie v6); stores: `events, rituals, spaces, spaceUrls, shelves, flipPairs, macros, macroRuns`.
 
@@ -32,7 +32,7 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** no new events for that domain (debug page → recent events has none). Remove it afterwards.
 4. [ ] Type in a password field on any login page (don't submit).
    **Expected:** no `field_changed` event for it; no typed text appears anywhere in events.
-5. [ ] `chrome://extensions` → Cadence → Details.
+5. [ ] `chrome://extensions` → ctrl-flow → Details.
    **Expected:** *Allow in Incognito* is unavailable (manifest says `not_allowed`), so nothing from Incognito can be recorded.
 6. [ ] Settings → **Show last AI request** (after a Standup/Coverage run later).
    **Expected:** shows exactly what was sent; no blocklisted domains, no password-manager sites.
@@ -59,19 +59,18 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
 5. [ ] Press the leader key, then the space's letter.
    **Expected:** that space's group is restored/focused. The activation is **not** learned as your own switch.
 
-## 5. Focus Flip
-1. [ ] Focus Flip section → enable it.
-   **Expected:** toggle on; it was off by default.
-2. [ ] Repeat several times: type in a "writing" tab, flip to a "reference" tab, return and keep typing (needs 2–3 round trips; demo mode needs fewer).
-   **Expected:** a learned pair appears in the pairs list.
-3. [ ] Type in the writing tab, then stop typing for the learned pause.
-   **Expected:** Cadence flips to the reference tab, then returns to the writing tab.
-4. [ ] While flipped, scroll or click in the reference tab.
-   **Expected:** the flip is cancelled and you stay put.
-5. [ ] Press Leader **S** during a flip.
-   **Expected:** the flip stops immediately.
-6. [ ] **During a macro replay** (see §6.7): type in the writing tab.
-   **Expected:** Focus Flip never starts while the macro runs.
+## 5. Focus Flip (continuous cycle)
+1. [ ] Settings → Focus Flip → turn it on. **Expected:** the status reads "Focus Flip: on · no pair yet".
+2. [ ] Open a doc (writing) and an article (reference). In the doc tab, open Settings → *Pair current tab* → pick the article → **Pair**. (Or switch between them a few times while typing in the doc to learn a pair.) **Expected:** the status reads "Focus Flip: <Doc> ↔ <Article> · cycling" while you are on either tab.
+3. [ ] In the doc, type, then stop. **Expected:** about 1.5 s after your last keystroke it flips to the article. Typing continuously never flips.
+4. [ ] In the article, scroll (or click), then stop. **Expected:** about 1.5 s later it flips back to the doc. It does not matter how long you scrolled.
+5. [ ] Repeat for several cycles. **Expected:** it keeps cycling; nothing flips when you arrive and do nothing.
+6. [ ] Go to a third tab and type and scroll there. **Expected:** no flips; the status says "paused (on another tab)". Return to the doc or the article and act again. **Expected:** the cycle resumes.
+7. [ ] Change *Flip to reference after typing stops* to 3.0 s and *Flip back after scrolling stops* to 0.5 s. **Expected:** the next flips use those delays.
+8. [ ] Pause recording (header), or start a macro. **Expected:** no flips; the status explains why. Focus a password field in the doc: no flip.
+9. [ ] Turn the toggle off mid-cycle. **Expected:** nothing more flips and you stay on the current tab.
+10. [ ] After cycling, open Spaces and Macros. **Expected:** no "Switch to …?" offer, no new macro suggestion, and no new space letters or co-usage from the flips. The debug event list marks the flip switches `programmatic`.
+11. [ ] No typed text or scroll positions appear in the debug event list or exports (only counts and timestamps).
 
 ## 6. Macros (Repeat-to-Macro)
 **Prep:** Settings → turn **Demo mode** on (lower thresholds: 2 runs, 1 day). Macro playback → *Guided — watch it work*.
@@ -102,17 +101,18 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
 12. [ ] Pause recording, repeat a routine 3×, unpause.
     **Expected:** no macro is suggested from paused activity.
 
-## 7. Leader overlay (E, P, /)
-1. [ ] Press Ctrl/⌘+Shift+Space on a normal page.
-   **Expected:** an overlay lists letters: **E** open panel, **S** stop, **P** pause, **/** search, **R / K / M** macro actions, then space letters, then macro letters. **No "coming soon" entries.**
-2. [ ] Press **E**. **Expected:** side panel opens; overlay closes.
-3. [ ] Leader → **P**. **Expected:** recording toggles paused/resumed (badge + header update). Press again to restore.
-4. [ ] Leader → **/**, type part of a space or ritual name, ↑/↓, Enter.
-   **Expected:** filtered list; Enter switches to that space / opens that ritual's docs. Esc closes.
-5. [ ] Open the overlay on `chrome://extensions` (no content script there).
-   **Expected:** the side panel opens with the Leader keys section highlighted; clicking or typing a letter works.
-6. [ ] In Leader keys settings, change **P** to another letter; try changing it to **R**.
-   **Expected:** change accepted for a free letter; **R** rejected (already used/reserved).
+## 7. Leader pie menu (R K M S P /, E)
+1. [ ] Press ⌘⇧Y on a normal site (e.g. GitHub).
+   **Expected:** a ring menu rises from the bottom center (no animation if the OS asks for reduced motion). Slices: Repeat R, Keep K, Mark M, Stop S, Pause P, Search /, then your lettered macros and spaces. It does **not** close by itself after 2 s; it stays until you choose, press Esc, or click far outside (10 s of no input closes it).
+2. [ ] Move the mouse over slices. **Expected:** the hovered slice highlights and the center shows its description and letter.
+3. [ ] Select three ways: press a letter; click a slice; move the mouse toward a slice (even past the ring) and click. **Expected:** all three run that slice. Clicking the empty center does nothing; clicking well outside the ring closes it.
+4. [ ] With more than 8 items (add letters to several macros/spaces). **Expected:** the 8th slice is "More…" and opens the search list; every item still runs on its letter.
+5. [ ] Press R after a 3-page task. **Expected:** the center shows "Repeat 3 steps: Open … Enter run & save · Esc cancel". Enter runs; Esc cancels.
+6. [ ] Press **E**. **Expected:** the center says to click the ctrl-flow toolbar icon.
+7. [ ] Pause (P) toggles recording; Search (/) → type a macro/space/ritual name → Enter runs it.
+8. [ ] Switch the OS between light and dark. **Expected:** the pie follows it; text stays crisp when you zoom the page to 200%.
+9. [ ] Open the debug event list after using the pie. **Expected:** no events from clicking or typing in it.
+10. [ ] ⌘⇧Y on `chrome://version`. **Expected:** the side panel opens on Settings (same keycap styling).
 
 ## 8. Standup and read aloud
 1. [ ] Standup tab → choose a range (**Today** / **Yesterday**) → **Generate**.
@@ -157,3 +157,22 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** that domain appears nowhere in the request or the output.
 5. [ ] Typed values: Add step → Type text: `hello` saves; `password: x`, a card number, or text on an excluded page is refused with a reason. Check the debug event list.
    **Expected:** no typed text in any event (only key counts / field names).
+
+## 13. Macro letters, slots, quieter suggestions, panel
+1. [ ] Save a macro (R + Enter, K, a suggestion, or "keep last 30 s"). **Expected:** a notification (R/K) or an inline prompt (panel) offers "Assign G?" with one click. Assign it.
+2. [ ] Reload the extension, press ⌘⇧Y, then G. **Expected:** G is a slice in the pie and runs the macro. If a run fails you see a notification saying why (it used to fail silently).
+3. [ ] Rebind: Macros tab → row menu → *Direct shortcut slot* → Slot 1. At `chrome://extensions/shortcuts` bind "Run macro slot 1" to ⌘⇧G. **Expected:** pressing it runs that macro; an empty slot says so. (Requires the four slot commands in the manifest.)
+4. [ ] Macros tab. **Expected:** saved macros first, then at most 2 suggestions, then recent runs. Tab-switching between already-open tabs never produces a suggestion. A 10 s routine needs 3 repeats; 30 s–5 min needs 2; over 5 min needs 1. **Not now** hides a suggestion for a day, then longer after each dismissal; **Never** is permanent, even after 14 days.
+5. [ ] Walk Rituals, Spaces, Macros, Standup and Settings at ~380 px. **Expected:** single-line rows with truncation (full text on hover), icon buttons with tooltips, collapsible Spaces and Settings groups, no horizontal scroll, little vertical scrolling.
+
+## 14. Find PDF (F) and Focus Flip on/off in the pie
+**Needs the `downloads` permission** (see the manifest diff). Without it, Find PDF opens the verified PDF in a tab instead of downloading.
+1. [ ] Highlight "Attention Is All You Need" on any page, press ⌘⇧Y, then **F**. **Expected:** the center says "Looking for “Attention Is All You Need”…"; the PDF downloads as `Attention Is All You Need.pdf`; the notification says "Downloaded from arXiv" with an **Open** button that opens the file.
+2. [ ] Press ⌘⇧Y → F with nothing selected. **Expected:** the center shows a one-line "Paper title or DOI" box; type a title, Enter. **Expected:** same lookup.
+3. [ ] Highlight a made-up title ("Zzyzx quantum marmalade theorem") and run F. **Expected:** a new tab opens with a Google search for `"Zzyzx quantum marmalade theorem" pdf`; notification "No free PDF found. Opened a search."
+4. [ ] Settings → General → **Show last outbound request**. **Expected:** after each F, it lists each source tried (arXiv first; later ones only if it had nothing), the title that was sent, and one outcome per source: `found (match 1.00)`, `no match (no results)`, `no match (best score 0.62)`, `verify failed (…)`, `http 429`, or `error (…)`. No page URLs or page content. If a source throws or every source fails, the notification says "Find PDF error" and no search tab opens.
+5. [ ] Add the page's site to *Never record these sites* and run F there. **Expected:** a "Find PDF is off here" message; nothing is sent (the outbound viewer does not change). Also pause recording and press F. **Expected:** "ctrl-flow is paused".
+6. [ ] Learn it: select a title and copy it, search Google for "<title> online pdf", open arXiv (or Semantic Scholar / Archive), and download the PDF by hand, all within 3 minutes. **Expected:** a notification "Save “Find PDF”? Looks like you looked up a paper and downloaded its PDF. Save as Find PDF on F?" and a suggestion in the Macros tab (shown first). Accept. **Expected:** a saved "Find PDF" row with an F badge and readable steps (take paper_title from selection; look it up on the sources you used first; download; fall back to a search).
+7. [ ] Run the saved Find PDF from its row's play button (with a title selected on the page), from F, and from a macro slot key. **Expected:** all three behave like step 1.
+8. [ ] Debug event list after steps 1–6. **Expected:** `copy` and `download` events exist with only a domain, extension and mime type. No copied text, no search query, no file name, no selected title. ctrl-flow's own downloads and tabs are not recorded.
+9. [ ] Open the pie. **Expected:** slices read Repeat, Keep, Mark, Stop, Pause, Find PDF, Flip: off/on, Search. Hover the Flip slice: the center says whether Focus Flip is on. Press **O** (or click it): the center says "Focus Flip is now on/off" and Settings → Focus Flip shows the same state. With several lettered macros, Flip and Search move behind "More…", where they are still listed and still run on O and /.

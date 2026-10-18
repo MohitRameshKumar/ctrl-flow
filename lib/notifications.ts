@@ -1,5 +1,6 @@
 import { RITUAL_NOTIFICATION_PREFIX, handleRitualNotificationButtonClicked } from './rituals';
-import { LEADER_NOTIFICATION_PREFIX, handleLeaderNotificationButtonClicked } from './macro-leaders';
+import { routeLeaderNotification } from './leader';
+import { LEADER_NOTIFICATION_PREFIX } from './macro-leaders';
 import { MACRO_NOTIFICATION_PREFIX, handleMacroNotificationButtonClicked } from './macros';
 import { SPACE_NOTIFICATION_PREFIX, handleSpaceNotificationButtonClicked } from './spaces';
 
@@ -15,7 +16,7 @@ export async function routeNotificationButtonClicked(notificationId: string, but
   }
 
   if (notificationId.startsWith(LEADER_NOTIFICATION_PREFIX)) {
-    await handleLeaderNotificationButtonClicked(notificationId, buttonIndex);
+    await routeLeaderNotification(notificationId, buttonIndex);
     return;
   }
 

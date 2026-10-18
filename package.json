@@ -1,6 +1,6 @@
 {
   "name": "cadence-collector",
-  "description": "Cadence: a desktop app that notices the routines you repeat in your browser and replays them.",
+  "description": "ctrl-flow: notices the routines you repeat in your browser and replays them (Chrome extension and desktop app).",
   "private": true,
   "version": "0.1.0",
   "type": "module",

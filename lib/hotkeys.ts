@@ -8,6 +8,8 @@
 export interface LeaderContext {
   tabId?: number;
   windowId?: number;
+  /** The page's selected text, captured when the pie opened (Find PDF only; never stored). */
+  selection?: string;
 }
 
 export interface LeaderRegistration {
@@ -19,6 +21,10 @@ export interface LeaderRegistration {
   run: (ctx: LeaderContext) => void | Promise<void>;
   /** Only Repeat-to-Macro sets this, to take R / K / M. */
   allowReserved?: boolean;
+  /** One word for a pie slice ("Repeat"). */
+  short?: string;
+  /** One line shown in the pie's center while the slice is hovered. */
+  description?: string;
 }
 
 export const RESERVED_LETTERS: Record<string, string> = {
@@ -33,6 +39,11 @@ export interface MenuItem {
   kind: 'action' | 'space' | 'macro';
   /** Registration id, or the space / macro id for kind "space" / "macro". */
   id: string;
+  /** Short slice label and hover description for the pie menu. */
+  short?: string;
+  description?: string;
+  /** Toggle items (Focus Flip) only: whether the thing is currently on. */
+  on?: boolean;
 }
 
 export type LetterCheck = { ok: true; letter: string } | { ok: false; reason: string };
@@ -139,18 +150,24 @@ export function buildMenu(
     label: r.label,
     kind: 'action',
     id: r.id,
+    short: r.short,
+    description: r.description,
   }));
   const spaceItems: MenuItem[] = spaces.map((s) => ({
     letter: s.letter,
     label: `Project: ${s.name}`,
     kind: 'space',
     id: String(s.spaceId),
+    short: s.name,
+    description: `Switch to the "${s.name}" project`,
   }));
   const macroItems: MenuItem[] = macros.map((m) => ({
     letter: m.letter,
     label: `Macro: ${m.name}`,
     kind: 'macro',
     id: String(m.macroId),
+    short: m.name,
+    description: `Run the macro "${m.name}"`,
   }));
   const byLetter = (a: MenuItem, b: MenuItem) => a.letter.localeCompare(b.letter);
   return [...actions.sort(byLetter), ...spaceItems.sort(byLetter), ...macroItems.sort(byLetter)];
@@ -200,4 +217,28 @@ export interface LeaderRepeatPreviewMessage {
   type: 'leader_repeat_preview';
   text: string;
   runnable: boolean;
+}
+
+/**
+ * Which stored letters must be cleared at startup: invalid, reserved, taken by an action, or already
+ * claimed by an earlier row (spaces first, then macros, each in id order). Guarantees the menu never
+ * has two owners for one key. Pure; `leader.syncLetters` applies the result.
+ */
+export function planLetterCleanup(
+  actionLetters: string[],
+  spaces: { id: number; letter?: string }[],
+  macros: { id: number; letter?: string }[],
+): { clearSpaces: number[]; clearMacros: number[] } {
+  const owned = new Set(actionLetters.map(normalizeLetter));
+  const claim = (raw: string): boolean => {
+    const letter = normalizeLetter(raw);
+    if (!isValidLetter(letter, false) || RESERVED_LETTERS[letter] || owned.has(letter)) return false;
+    owned.add(letter);
+    return true;
+  };
+  const byId = <T extends { id: number }>(rows: T[]) => [...rows].sort((a, b) => a.id - b.id);
+  return {
+    clearSpaces: byId(spaces).filter((s) => s.letter && !claim(s.letter)).map((s) => s.id),
+    clearMacros: byId(macros).filter((m) => m.letter && !claim(m.letter)).map((m) => m.id),
+  };
 }

@@ -1,4 +1,6 @@
 import { createContentGuard } from '@/lib/content-guard';
+import { createIdleTracker } from '@/lib/flip-idle';
+import { FLIP_READ_DELAY_KEY, FLIP_WRITE_DELAY_KEY, clampFlipDelay, delaysFromStorage } from '@/lib/flip-settings';
 import { isSensitiveField } from '@/lib/privacy';
 import type { ContentMessage } from '@/lib/types';
 
@@ -148,6 +150,13 @@ function onClick(e: MouseEvent): void {
   send({ type: 'click', selector, label, frameUrl: frameOrigin() });
 }
 
+/** A copy happened: report the fact only. The clipboard and the selection are never read here. */
+function onCopy(): void {
+  if (leaderOverlayOpen()) return;
+  if (isSensitiveControl(document.activeElement)) return;
+  send({ type: 'copy', frameUrl: frameOrigin() });
+}
+
 function onFieldChange(e: Event): void {
   const el = e.target;
   if (
@@ -201,53 +210,55 @@ function createTypingTracker() {
 }
 
 /**
- * Focus Flip activity pulses. Entirely inert unless the user has turned Focus Flip on (the flag is
- * read from storage and kept in sync). A pulse only says "a key / scroll / click happened" — no key
- * values, positions, or content — throttled to one per 500 ms per kind, with a trailing pulse so the
- * background's "last keystroke" is never earlier than the real one.
+ * Focus Flip activity. Entirely inert unless the user has turned Focus Flip on (the flag is read from
+ * storage and kept in sync). Carries no key values, positions or content: only "something happened"
+ * and "it has been quiet for the flip delay".
+ *
+ * Idle is measured here, in the page, from the real last event: every keystroke / scroll / click
+ * restarts one timer, and when it finally fires the background is told. The old design sent
+ * throttled pulses and let the background guess the pause, which made the flip late by the throttle
+ * plus a learned 2-10 s pause.
+ *   - typing idles with the *write* delay; scrolling and clicking share one timer with the *read* delay.
+ *   - the first event of a burst is announced once (pair learning); later events only restart the timer.
  */
 function createFocusFlipPulses() {
-  const THROTTLE_MS = 500;
   let enabled = false;
-  const lastSent: Record<string, number> = {};
-  const trailing: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+  let delays = delaysFromStorage({});
+  const tracker = createIdleTracker({
+    enabled: () => enabled,
+    delays: () => delays,
+    send: (m) => send(m),
+  });
 
   try {
     chrome.storage.local
-      .get('focusFlipEnabled')
+      .get(['focusFlipEnabled', FLIP_WRITE_DELAY_KEY, FLIP_READ_DELAY_KEY])
       .then((r) => {
         enabled = r.focusFlipEnabled === true;
+        delays = delaysFromStorage(r);
       })
       .catch(() => undefined);
     const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (!guard.alive()) return;
-      if (area === 'local' && changes.focusFlipEnabled) enabled = changes.focusFlipEnabled.newValue === true;
+      if (!guard.alive() || area !== 'local') return;
+      if (changes.focusFlipEnabled) {
+        enabled = changes.focusFlipEnabled.newValue === true;
+        if (!enabled) tracker.clear(); // toggled off: stop at once
+      }
+      if (changes[FLIP_WRITE_DELAY_KEY]) delays = { ...delays, writeMs: clampFlipDelay(changes[FLIP_WRITE_DELAY_KEY].newValue) };
+      if (changes[FLIP_READ_DELAY_KEY]) delays = { ...delays, readMs: clampFlipDelay(changes[FLIP_READ_DELAY_KEY].newValue) };
     };
     chrome.storage.onChanged.addListener(onStorage);
     guard.onTeardown(() => chrome.storage.onChanged.removeListener(onStorage));
   } catch {
     guard.teardown();
   }
-  guard.onTeardown(() => {
-    for (const t of Object.values(trailing)) if (t) clearTimeout(t);
+  guard.onTeardown(() => tracker.clear());
+  // A hidden tab can't be the one you are working in: drop its pending idle so it can't fire later.
+  guard.listen(document, 'visibilitychange', () => {
+    if (document.visibilityState === 'hidden') tracker.clear();
   });
 
-  function pulse(what: 'key' | 'scroll' | 'click'): void {
-    if (!enabled) return;
-    const now = Date.now();
-    const since = now - (lastSent[what] ?? 0);
-    if (since >= THROTTLE_MS) {
-      lastSent[what] = now;
-      send({ type: 'activity', what });
-      return;
-    }
-    if (trailing[what]) return;
-    trailing[what] = setTimeout(() => {
-      trailing[what] = undefined;
-      lastSent[what] = Date.now();
-      if (enabled) send({ type: 'activity', what });
-    }, THROTTLE_MS - since);
-  }
+  const activity = (what: 'key' | 'scroll' | 'click') => tracker.activity(what);
 
   let sensitiveFocused = false;
   function onFocusChange(e: FocusEvent): void {
@@ -267,11 +278,11 @@ function createFocusFlipPulses() {
     onKeydown(e: KeyboardEvent): void {
       if (leaderOverlayOpen()) return;
       if (MODIFIER_ONLY_KEYS.has(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
-      pulse('key');
+      activity('key');
     },
-    onScroll: () => pulse('scroll'),
+    onScroll: () => activity('scroll'),
     onClick: () => {
-      if (!leaderOverlayOpen()) pulse('click');
+      if (!leaderOverlayOpen()) activity('click');
     },
     onFocusChange,
   };
@@ -293,6 +304,7 @@ export default defineContentScript({
     guard.listen(document, 'focusout', flip.onFocusChange, { capture: true });
     guard.listen(window, 'keydown', flip.onKeydown, { capture: true });
     guard.listen(document, 'change', onFieldChange, { capture: true });
+    guard.listen(document, 'copy', onCopy, { capture: true });
     // Rich editors (Google Docs, custom contenteditable widgets) commonly call
     // stopImmediatePropagation() on keydown at the document level or below to own
     // their own keyboard handling. A capture-phase listener on `window` always runs

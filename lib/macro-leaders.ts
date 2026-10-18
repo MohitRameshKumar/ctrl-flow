@@ -20,7 +20,7 @@ import {
   runMacro,
 } from './macros';
 import { getBlocklist, isBlocklisted } from './privacy';
-import type { MacroCandidate } from './types';
+import type { Macro, MacroCandidate } from './types';
 import { isTerminal, readRunState, sendRunCommand } from './macro-run-channel';
 
 const MARK_START_KEY = 'macroMarkStart';
@@ -28,7 +28,8 @@ const MARK_START_KEY = 'macroMarkStart';
 const CONSUMED_KEY = 'macroSegmentConsumedAt';
 const PENDING_REPEAT_KEY = 'macroRepeatPending';
 const PENDING_REPEAT_MAX_AGE_MS = 2 * 60 * 1000;
-export const LEADER_NOTIFICATION_PREFIX = 'cadence-leader:';
+import { LEADER_NOTIFICATION_PREFIX } from './notification-ids';
+export { LEADER_NOTIFICATION_PREFIX };
 const REPEAT_NOTIFICATION_ID = `${LEADER_NOTIFICATION_PREFIX}repeat`;
 /** A forgotten mark (M pressed once, never again) expires rather than swallowing hours of history. */
 const MARK_MAX_AGE_MS = 10 * 60 * 1000;
@@ -111,7 +112,7 @@ export async function previewRepeat(ctx: LeaderContext = {}): Promise<void> {
     await chrome.notifications.create(REPEAT_NOTIFICATION_ID, {
       type: 'basic',
       iconUrl: '/icon/128.png',
-      title: 'Cadence · repeat',
+      title: 'ctrl-flow · repeat',
       message: text,
       ...(runnable ? { buttons: [{ title: 'Run' }, { title: 'Cancel' }] } : {}),
     });
@@ -131,6 +132,7 @@ export async function confirmRepeat(): Promise<void> {
   const { plan } = pending;
   try {
     let macroId: number | undefined;
+    let macroSaved: Macro | undefined;
     if (plan.via === 'segment') {
       // The same function Leader K uses, over the window the preview was built from.
       const macro = await recordMacroFromRecentActivity({ ...plan.segment.window, refine: refineSegment,
@@ -138,6 +140,7 @@ export async function confirmRepeat(): Promise<void> {
         nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
       });
       macroId = macro?.id;
+      macroSaved = macro ?? undefined;
     } else if (plan.via === 'last-macro') {
       macroId = plan.macro.id;
     }
@@ -146,6 +149,7 @@ export async function confirmRepeat(): Promise<void> {
       return;
     }
     await markConsumed();
+    if (plan.via === 'segment' && macroSaved) await afterSave?.(macroSaved);
     await runMacro(macroId);
   } catch (err) {
     await tell('Could not repeat', err instanceof Error ? err.message : String(err));
@@ -168,6 +172,29 @@ export async function handleLeaderNotificationButtonClicked(notificationId: stri
 /** R (the registered action) is just the preview. */
 export const repeatLastMacro = previewRepeat;
 
+/**
+ * Called after K / M / R save a macro. Set by `leader.ts` (which owns letter assignment) so this
+ * file need not import it: leader.ts already imports this one.
+ */
+let afterSave: ((macro: Macro) => Promise<void>) | undefined;
+export function setAfterSaveHook(fn: (macro: Macro) => Promise<void>): void {
+  afterSave = fn;
+}
+
+/** Direct shortcuts: the "Run macro slot N" commands run whichever macro holds slot N. */
+export async function runMacroSlot(slot: number): Promise<void> {
+  const macro = (await getMacros()).find((m) => m.slot === slot && m.status !== 'never');
+  if (macro?.id === undefined) {
+    await tell(`No macro in slot ${slot}`, 'Pick one in the Macros tab (row menu → Direct shortcut).');
+    return;
+  }
+  try {
+    if ((await runMacro(macro.id)) === null) await tell('Could not run macro', macro.name);
+  } catch (err) {
+    await tell(`Could not run "${macro.name}"`, err instanceof Error ? err.message : String(err));
+  }
+}
+
 /** K: keep the last ~30 seconds of activity as a macro. */
 export async function keepLastAsMacro(): Promise<void> {
   const now = Date.now();
@@ -185,6 +212,7 @@ export async function keepLastAsMacro(): Promise<void> {
     return;
   }
   await tell('Macro saved', macro.name);
+  await afterSave?.(macro);
 }
 
 /** M: first press marks the start; the second keeps everything since as a macro. */
@@ -210,6 +238,7 @@ export async function toggleMark(): Promise<void> {
     return;
   }
   await tell('Macro saved', macro.name);
+  await afterSave?.(macro);
 }
 
 /**

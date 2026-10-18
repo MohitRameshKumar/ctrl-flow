@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { suggestLetter } from '@/lib/hotkeys';
-import { MACRO_LETTERS_KEY, SPACE_LETTERS_KEY, setMacroLetter, setSpaceLetter, takenLetters } from '@/lib/leader';
+import { getMacroLetters, getSpaceLetters, setMacroLetter, setSpaceLetter, takenLetters } from '@/lib/leader';
 
 /**
  * HOT-4: assign a free leader-key letter to a saved space (Leader + letter = project switch) or,
  * with `kind="macro"`, to a saved macro (Leader + letter = run it). `spaceId` is the row's id either way.
  */
 export function SpaceLetterControl({ spaceId, name, kind = 'space' }: { spaceId: number; name: string; kind?: 'space' | 'macro' }) {
-  const storageKey = kind === 'macro' ? MACRO_LETTERS_KEY : SPACE_LETTERS_KEY;
   const ownerId = `${kind}:${spaceId}`;
   const assignLetter = kind === 'macro' ? setMacroLetter : setSpaceLetter;
   const [letter, setLetter] = useState('');
@@ -16,17 +15,24 @@ export function SpaceLetterControl({ spaceId, name, kind = 'space' }: { spaceId:
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
-    const { [storageKey]: raw } = await chrome.storage.local.get<Record<string, Record<string, string> | undefined>>(storageKey);
-    const mine = raw?.[String(spaceId)] ?? '';
+    // Letters live on the macro / space row (Dexie), so read them from there.
+    const mine =
+      kind === 'macro'
+        ? ((await getMacroLetters()).find((m) => m.macroId === spaceId)?.letter ?? '')
+        : ((await getSpaceLetters()).find((s) => s.spaceId === spaceId)?.letter ?? '');
     setLetter(mine);
     setSuggestion(suggestLetter(name, await takenLetters(ownerId)));
-  }, [spaceId, name, storageKey, ownerId]);
+  }, [spaceId, name, kind, ownerId]);
 
   useEffect(() => {
     refresh();
     const onChanged = () => refresh();
     chrome.storage.onChanged.addListener(onChanged);
-    return () => chrome.storage.onChanged.removeListener(onChanged);
+    const interval = setInterval(refresh, 3000); // row changes don't fire storage events
+    return () => {
+      chrome.storage.onChanged.removeListener(onChanged);
+      clearInterval(interval);
+    };
   }, [refresh]);
 
   const assign = async (value: string) => {

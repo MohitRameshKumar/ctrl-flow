@@ -1,6 +1,6 @@
 // UI-5: the toolbar badge shows whether Cadence is recording or paused.
-const RECORDING = { text: '●', color: '#2e7d32', title: 'Cadence: recording' };
-const PAUSED = { text: 'II', color: '#9e9e9e', title: 'Cadence: paused' };
+const RECORDING = { text: '●', color: '#2e7d32', title: 'ctrl-flow: recording' };
+const PAUSED = { text: 'II', color: '#9e9e9e', title: 'ctrl-flow: paused' };
 
 export async function updateBadge(): Promise<void> {
   if (!chrome.action) return;

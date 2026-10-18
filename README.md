@@ -1,4 +1,4 @@
-# Cadence
+# ctrl-flow
 
 Cadence notices the routines you repeat in your browser and gives you one key that runs them.
 

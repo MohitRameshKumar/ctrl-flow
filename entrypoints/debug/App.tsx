@@ -54,11 +54,11 @@ export default function App() {
 
   const handleExport = async () => {
     const data = await exportAll();
-    downloadJson(data, `cadence-export-${Date.now()}.json`);
+    downloadJson(data, `ctrl-flow-export-${Date.now()}.json`);
   };
 
   const handleClear = async () => {
-    if (!confirm('Delete all stored Cadence events? This cannot be undone.')) return;
+    if (!confirm('Delete all stored ctrl-flow events? This cannot be undone.')) return;
     await clearAll();
     await refresh();
   };
@@ -96,7 +96,7 @@ export default function App() {
 
   return (
     <div>
-      <h1>Cadence Debug</h1>
+      <h1>ctrl-flow Debug</h1>
       <p className="subtitle">Internal testing view. Not the real UI.</p>
 
       <div className="toolbar">

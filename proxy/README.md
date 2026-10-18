@@ -1,4 +1,4 @@
-# Cadence LLM proxy
+# ctrl-flow LLM proxy
 
 A small Cloudflare Worker that forwards `name_spaces` and `assign_tabs` requests to Claude
 Haiku 5.5 so the extension never ships an API key. `standup` and `coverage_doc` are stubs
@@ -61,14 +61,14 @@ failures without redeploying.
 
 ```
 POST /task
-X-Cadence-Token: <CADENCE_TOKEN>
+X-ctrl-flow-Token: <CADENCE_TOKEN>
 Content-Type: application/json
 
 { "task": "name_spaces" | "assign_tabs" | "standup" | "coverage_doc", "input": { ... } }
 ```
 
 - Unknown `task` → 400
-- Missing/wrong `X-Cadence-Token` → 401
+- Missing/wrong `X-ctrl-flow-Token` → 401
 - Body over 50 KB → 413
 - `standup` / `coverage_doc` → 501 (not implemented yet)
 - Model fails to return valid JSON after one retry → 502

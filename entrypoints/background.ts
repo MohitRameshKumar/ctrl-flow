@@ -1,6 +1,8 @@
 import { updateBadge } from '@/lib/badge';
 import { createCalendarSource } from '@/lib/calendar';
 import { MACRO_LOOKBACK_MS } from '@/lib/constants';
+import { checkPaperLookup } from '@/lib/find-pdf-command';
+import { isPdfSearchUrl } from '@/lib/paper-pattern';
 import { db, pruneMacroData } from '@/lib/db';
 import { normalizeUrl } from '@/lib/normalize';
 import { routeNotificationButtonClicked } from '@/lib/notifications';
@@ -33,18 +35,17 @@ import {
 } from '@/lib/macros';
 import { SPACE_RECOMPUTE_ALARM, SWITCH_CHECK_ALARM, checkAndOfferSwitch, recomputeSpaces } from '@/lib/spaces';
 import {
-  FLIP_RETURN_ALARM,
   FOCUS_FLIP_KEY,
-  cancelFlip,
+  LEGACY_FLIP_RETURN_ALARM,
   disableFocusFlip,
   handleActivity,
+  handleIdle,
   handleSensitiveFocus,
   handleTabRemoved,
   handleUserActivation,
-  resumeFlipIfDue,
 } from '@/lib/focus-flip';
-import { cancelRepeat, confirmRepeat } from '@/lib/macro-leaders';
-import { handleLeaderCommand, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
+import { cancelRepeat, confirmRepeat, runMacroSlot } from '@/lib/macro-leaders';
+import { handleLeaderCommand, registerBuiltinLeaders, syncLetters, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
 import type { BlocklistConfig, CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
@@ -73,6 +74,9 @@ interface WriteEventInput {
   keyCount?: number;
   programmatic?: boolean;
   spa?: boolean;
+  /** download only */
+  ext?: string;
+  mime?: string;
 }
 
 /**
@@ -116,6 +120,8 @@ const KINDS_REQUIRING_URL = new Set<EventKind>([
   'navigated',
   'click',
   'field_changed',
+  'copy',
+  'download',
 ]);
 
 function isDuplicate(kind: EventKind, url: string | undefined, tabId: number | undefined): boolean {
@@ -190,6 +196,10 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     keyCount: input.keyCount,
     programmatic: input.programmatic ? true : undefined,
     spa: input.spa ? true : undefined,
+    // Only the flag survives: normalizeUrl strips the query, and the query text is never stored.
+    pdfSearch: input.kind === 'navigated' || input.kind === 'tab_opened' || input.kind === 'tab_activated' ? (isPdfSearchUrl(input.rawUrl) ? true : undefined) : undefined,
+    ext: input.ext,
+    mime: input.mime,
   };
 
   await db.events.add(event);
@@ -343,6 +353,10 @@ async function handleContentMessage(
         fieldName: message.fieldName,
       });
       return;
+    case 'copy':
+      // The fact of a copy and where it happened: never what was copied.
+      await writeEvent({ kind: 'copy', tabId: tab?.id, windowId: tab?.windowId, rawUrl: tab?.url, frameUrl: message.frameUrl });
+      return;
     case 'typing_burst':
       await writeEvent({
         kind: 'typing_burst',
@@ -354,14 +368,17 @@ async function handleContentMessage(
       });
       return;
     case 'activity':
-      if (tab?.id !== undefined) await handleActivity(tab.id, message.what);
+      if (tab?.id !== undefined) await handleActivity(tab.id, message.what, message.ts);
+      return;
+    case 'activity_idle':
+      if (tab?.id !== undefined) await handleIdle(tab.id, message.what);
       return;
     case 'sensitive_focus':
       if (tab?.id !== undefined) await handleSensitiveFocus(tab.id, message.value);
       return;
     // Leader-key requests are commands, never activity: nothing here writes an event.
     case 'leader_run':
-      await runLeaderLetter(message.letter, { tabId: tab?.id, windowId: tab?.windowId });
+      await runLeaderLetter(message.letter, { tabId: tab?.id, windowId: tab?.windowId, selection: message.selection });
       return;
     case 'leader_run_item':
       await runSearchItem(message.kind, message.id);
@@ -410,11 +427,6 @@ async function handleAlarm(name: string): Promise<void> {
     return;
   }
 
-  if (name === FLIP_RETURN_ALARM) {
-    await resumeFlipIfDue();
-    return;
-  }
-
   if (name === MACRO_RECOMPUTE_ALARM) {
     await runMacroRecompute();
     return;
@@ -440,6 +452,9 @@ export default defineBackground(() => {
   );
 
   registerBuiltinLeaders();
+  chrome.alarms.clear(LEGACY_FLIP_RETURN_ALARM).catch(() => undefined); // the old return-timer model is gone
+  // Letters live on macro / space rows; re-validate them on every worker start.
+  syncLetters().catch((err) => console.error('[cadence] letter sync failed', err));
   updateBadge().catch((err) => console.error('[cadence] badge failed', err));
   // Installs from before the 1-minute cleanup cadence still have the old daily alarm: replace it.
   chrome.alarms.get(CLEANUP_ALARM).then((alarm) => {
@@ -467,6 +482,11 @@ export default defineBackground(() => {
       handleLeaderCommand(tab); // synchronous up to sidePanel.open(): see lib/leader.ts
       return;
     }
+    const slot = /^run-macro-slot-([1-4])$/.exec(command);
+    if (slot) {
+      runMacroSlot(Number(slot[1])).catch((err) => console.error('[cadence] macro slot failed', err));
+      return;
+    }
     if (command !== MACRO_PALETTE_COMMAND) return;
     const windowId = tab?.windowId;
     if (windowId === undefined) {
@@ -481,6 +501,16 @@ export default defineBackground(() => {
       .set({ [MACRO_PALETTE_REQUEST_KEY]: { ts: Date.now() } })
       .catch((err) => console.error('[cadence] palette request failed', err));
     opening.catch((err) => console.error('[cadence] sidePanel.open failed', err));
+  });
+
+  // Downloads (needs the `downloads` permission; absent until it is granted). Only the source URL,
+  // extension and mime type are recorded, never the file name or contents (CAP-1).
+  chrome.downloads?.onCreated.addListener((item) => {
+    const path = (item.finalUrl || item.url).split(/[?#]/)[0] ?? '';
+    const ext = /\.([a-z0-9]{1,5})$/i.exec(path)?.[1]?.toLowerCase();
+    writeEvent({ kind: 'download', rawUrl: item.finalUrl || item.url, ext, mime: item.mime || undefined })
+      .then(() => checkPaperLookup())
+      .catch((err) => console.error('[cadence] download event failed', err));
   });
 
   chrome.runtime.onStartup.addListener(() => {
@@ -576,9 +606,6 @@ export default defineBackground(() => {
     if (area === 'local' && changes[FOCUS_FLIP_KEY] && changes[FOCUS_FLIP_KEY].newValue !== true) {
       disableFocusFlip().catch((err) => console.error('[cadence] disabling focus flip failed', err));
     }
-    if (area === 'local' && changes.paused?.newValue === true) {
-      cancelFlip().catch((err) => console.error('[cadence] cancel flip on pause failed', err));
-    }
     if (area === 'local' && changes.paused) {
       updateBadge().catch((err) => console.error('[cadence] badge failed', err));
     }
@@ -589,7 +616,6 @@ export default defineBackground(() => {
 
   chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
-      cancelFlip().catch((err) => console.error('[cadence] cancel flip on blur failed', err));
       writeEvent({ kind: 'chrome_focus_lost' }).catch((err) =>
         console.error('[cadence] focus event failed', err),
       );

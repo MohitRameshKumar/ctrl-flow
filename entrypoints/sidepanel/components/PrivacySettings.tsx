@@ -9,6 +9,7 @@ export function PrivacySettings() {
   const [blocklist, setBlocklist] = useState<BlocklistConfig>(DEFAULT_BLOCKLIST);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   const refresh = useCallback(async () => {
     const { [RETENTION_KEY]: r } = await chrome.storage.local.get<Record<string, unknown>>(RETENTION_KEY);
@@ -39,9 +40,7 @@ export function PrivacySettings() {
   const remove = (domain: string) => save({ ...blocklist, domains: blocklist.domains.filter((d) => d !== domain) });
 
   return (
-    <section className="settings privacy-settings">
-      <h3>Privacy</h3>
-
+    <div className="settings-block privacy-settings">
       <label className="settings-row">
         <span>Keep activity history for</span>
         <select
@@ -56,13 +55,13 @@ export function PrivacySettings() {
           ))}
         </select>
       </label>
-      <div className="doc-seen">
-        Older activity is deleted automatically. Rituals, spaces and other saved items are kept. Rituals and Spaces learn from this history, so a short setting gives them less to work with.
+      <div className="hint">
+        Older activity is deleted automatically; saved rituals, spaces and macros are kept. A short setting gives Rituals and Spaces less to learn from.
       </div>
 
-      <h4>Never record these sites</h4>
+      <div className="sub-title">Never record these sites</div>
       <ul className="excluded-list">
-        {blocklist.domains.map((d) => (
+        {(showAll ? blocklist.domains : blocklist.domains.slice(0, 3)).map((d) => (
           <li key={d}>
             <span>{d}</span>
             <button className="btn btn-remove" onClick={() => remove(d)} aria-label={`Remove ${d}`}>
@@ -71,6 +70,11 @@ export function PrivacySettings() {
           </li>
         ))}
       </ul>
+      {blocklist.domains.length > 3 && (
+        <button className="btn-link self-start" onClick={() => setShowAll((v) => !v)}>
+          {showAll ? 'Show fewer' : `Show all ${blocklist.domains.length} sites`}
+        </button>
+      )}
       <div className="settings-row">
         <input
           className="excluded-input"
@@ -80,11 +84,11 @@ export function PrivacySettings() {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />
-        <button className="btn" onClick={add}>
+        <button className="btn sm" onClick={add}>
           Add
         </button>
       </div>
       {error && <div className="letter-error">{error}</div>}
-    </section>
+    </div>
   );
 }
