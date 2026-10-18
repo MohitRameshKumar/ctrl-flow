@@ -17,10 +17,10 @@
     "LLM_PROVIDER": "claude",
     "GEMINI_MODEL": "gemini-2.5-flash",
     // ElevenLabs text-to-speech (the `tts` task). Flash v2.5 costs half a credit per character
-    // instead of one, which doubles what the free tier covers. Voice is "Rachel", a stock voice
-    // available on every plan. Needs the ELEVENLABS_API_KEY secret.
+    // instead of one, which doubles what the free tier covers. Voice must be usable over the API on this
+    // account's plan (the old default, "Rachel", is a library voice and needs a paid plan). Needs the ELEVENLABS_API_KEY secret.
     "ELEVENLABS_MODEL": "eleven_flash_v2_5",
-    "ELEVENLABS_VOICE_ID": "21m00Tcm4TlvDq8ikWAM"
+    "ELEVENLABS_VOICE_ID": "CwhRBWXzGAHq8TQ4Fs17"
   },
   // Tiger Cloud (TigerData) Postgres, pooled by Hyperdrive. REPLACE `id` with your own:
   //   npx wrangler hyperdrive create cadence-tiger --connection-string="postgres://..."
