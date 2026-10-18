@@ -107,6 +107,8 @@ export type SpaceStatus = 'ai' | 'auto_offline' | 'user';
 export interface Space {
   id?: number;
   name: string;
+  /** Leader-key letter, persisted on the row so it survives restarts and cannot be orphaned. */
+  letter?: string;
   status: SpaceStatus;
   createdAt: number;
   updatedAt: number;
@@ -439,6 +441,12 @@ export interface Macro {
   trigger?: MacroTrigger;
   /** Cadence-side: if a page is already open, switch to it instead of opening a new tab. Default (unset) opens a new tab. */
   reuseOpenTabs?: boolean;
+  /** Cadence-side: hidden from suggestions until this time ("Not now" back-off). */
+  snoozedUntil?: number;
+  /** Cadence-side: leader-key letter (persisted on the row). */
+  letter?: string;
+  /** Cadence-side: which "Run macro slot N" command (1-4) runs this macro. */
+  slot?: number;
   lastRunAt?: number;
   lastRunResult?: MacroRunResult;
   createdAt: number;

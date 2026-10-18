@@ -15,11 +15,13 @@ import {
   macroThresholds,
 } from './constants';
 import {
+  deleteMacro,
   getMacroById,
   getMacros,
   putMacro,
   recordMacroRun,
   setMacroTrigger,
+  snoozeMacro,
   updateMacroStats,
   updateMacroStatus,
 } from './db';
@@ -47,6 +49,9 @@ import {
   shouldPromoteToAuto,
 } from './macro-learning';
 import { isReplayInProgress } from './macro-run-channel';
+import { refineSegment } from './macro-repeat';
+import { dominatedSuggestions, visibleSuggestions } from './macro-suggestions';
+import { snoozeMs } from './macro-thresholds';
 import { normalizeUrl } from './normalize';
 import { chromeActionSource } from './macro-source';
 import { getAutoRunEnabled, getDemoMode, getRunMode, getRunSpeed } from './settings';
@@ -72,12 +77,15 @@ export async function recomputeMacros(demoMode: boolean): Promise<void> {
   const now = Date.now();
 
   const actions = await chromeActionSource.getActions(now - MACRO_LOOKBACK_MS, now);
-  const sessions = sessionize(actions, sessionGapMs).filter(isUsableSession);
+  // Cadence-side: learn from real tasks, not tab switching. `refineSegment` drops activations of
+  // already-open tabs and unclicked in-page navigations and collapses redirect chains, so a session
+  // of "GitHub, Claude, GitHub, Claude" (switching) is no longer a routine.
+  const sessions = sessionize(actions, sessionGapMs).map(refineSegment).filter(isUsableSession);
   if (sessions.length === 0) return;
 
   const candidates = unionCandidates([
     ...detectByTimeOfDay(sessions, minRuns),
-    ...detectBySequence(sessions, minRuns, minSequenceDays),
+    ...detectBySequence(sessions, minRuns, minSequenceDays, { durationThresholds: true }),
   ]);
 
   const existing = await getMacros();
@@ -97,6 +105,18 @@ export async function recomputeMacros(demoMode: boolean): Promise<void> {
 
     await putMacro(match?.id !== undefined ? { ...next, id: match.id } : next);
   }
+
+  // Overlapping suggestions collapse to the longest one. Saved macros are never touched.
+  for (const redundant of dominatedSuggestions(await getMacros())) {
+    if (redundant.id !== undefined) await deleteMacro(redundant.id);
+  }
+}
+
+/** "Not now": counts the dismissal and hides the suggestion for longer each time (PAT-4). */
+export async function notNowSuggestion(macroId: number): Promise<void> {
+  await dismissMacroOffer(macroId);
+  const macro = await getMacroById(macroId);
+  if (macro) await snoozeMacro(macroId, Date.now() + snoozeMs(macro.stats.offersDismissed));
 }
 
 /**
@@ -210,9 +230,7 @@ async function recordOffer(macroKey: string): Promise<void> {
  */
 export async function offerTopSuggestedMacro(): Promise<void> {
   const macros = await getMacros();
-  const suggested = macros
-    .filter((m) => m.status === 'suggested' && m.id !== undefined)
-    .sort((a, b) => b.occurrences - a.occurrences);
+  const suggested = visibleSuggestions(macros, Date.now()).filter((m) => m.id !== undefined);
 
   const macro = suggested[0];
   if (!macro?.id) return;

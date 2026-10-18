@@ -43,8 +43,8 @@ import {
   handleUserActivation,
   resumeFlipIfDue,
 } from '@/lib/focus-flip';
-import { cancelRepeat, confirmRepeat } from '@/lib/macro-leaders';
-import { handleLeaderCommand, registerBuiltinLeaders, runLeaderLetter, runSearchItem } from '@/lib/leader';
+import { cancelRepeat, confirmRepeat, runMacroSlot } from '@/lib/macro-leaders';
+import { handleLeaderCommand, registerBuiltinLeaders, syncLetters, runLeaderLetter, runSearchItem } from '@/lib/leader';
 import { isProgrammaticNav } from '@/lib/programmatic';
 import { installTestHooks } from '@/lib/test-hooks';
 import type { BlocklistConfig, CadenceEvent, ContentMessage, EventKind } from '@/lib/types';
@@ -440,6 +440,8 @@ export default defineBackground(() => {
   );
 
   registerBuiltinLeaders();
+  // Letters live on macro / space rows; re-validate them on every worker start.
+  syncLetters().catch((err) => console.error('[cadence] letter sync failed', err));
   updateBadge().catch((err) => console.error('[cadence] badge failed', err));
   // Installs from before the 1-minute cleanup cadence still have the old daily alarm: replace it.
   chrome.alarms.get(CLEANUP_ALARM).then((alarm) => {
@@ -465,6 +467,11 @@ export default defineBackground(() => {
   chrome.commands.onCommand.addListener((command, tab) => {
     if (command === 'leader-key') {
       handleLeaderCommand(tab); // synchronous up to sidePanel.open(): see lib/leader.ts
+      return;
+    }
+    const slot = /^run-macro-slot-([1-4])$/.exec(command);
+    if (slot) {
+      runMacroSlot(Number(slot[1])).catch((err) => console.error('[cadence] macro slot failed', err));
       return;
     }
     if (command !== MACRO_PALETTE_COMMAND) return;

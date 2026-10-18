@@ -282,6 +282,30 @@ export async function updateMacroStatus(id: number, status: Macro['status']): Pr
   await db.macros.update(id, { status, updatedAt: Date.now() });
 }
 
+/** Sets (or clears, with null) the leader letter stored on a row. */
+export async function setSpaceLetterRow(id: number, letter: string | null): Promise<void> {
+  await db.spaces.update(id, { letter: letter ?? undefined });
+}
+
+export async function setMacroLetterRow(id: number, letter: string | null): Promise<void> {
+  await db.macros.update(id, { letter: letter ?? undefined });
+}
+
+/** Gives a macro the "Run macro slot N" command; a slot belongs to one macro at a time. */
+export async function setMacroSlot(id: number, slot: number | null): Promise<void> {
+  await db.transaction('rw', db.macros, async () => {
+    if (slot !== null) {
+      const holders = await db.macros.filter((m) => m.slot === slot && m.id !== id).primaryKeys();
+      for (const other of holders) await db.macros.update(other, { slot: undefined });
+    }
+    await db.macros.update(id, { slot: slot ?? undefined });
+  });
+}
+
+export async function snoozeMacro(id: number, until: number): Promise<void> {
+  await db.macros.update(id, { snoozedUntil: until });
+}
+
 export async function setMacroReuseOpenTabs(id: number, reuseOpenTabs: boolean): Promise<void> {
   await db.macros.update(id, { reuseOpenTabs, updatedAt: Date.now() });
 }
@@ -412,13 +436,8 @@ export function getMacroRuns(macroId: number): Promise<MacroRunRecord[]> {
 export async function pruneMacroData(cutoff: number): Promise<void> {
   await db.macroRuns.where('startedAt').below(cutoff).delete();
 
-  // A macro the user rejected is kept briefly so a rescan cannot resurrect it, then dropped.
-  const stale = await db.macros
-    .where('status')
-    .equals('never')
-    .and((m) => m.updatedAt < cutoff)
-    .primaryKeys();
-  if (stale.length > 0) await db.macros.bulkDelete(stale as number[]);
+  // Cadence-side: a macro the user rejected ("Never") is kept forever. The row is the memory that stops
+  // recompute from suggesting it again; the macro branch dropped it after the cutoff, which let it return.
 
   // Shelves are deliberately NOT pruned here (the macro branch did): a shelved space is a saved item
   // the user expects to restore, and retention in this app deletes events only.

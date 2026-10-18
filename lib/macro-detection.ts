@@ -6,6 +6,7 @@
  * directly unit-testable from Node, the same way `switch-detection.ts` is.
  */
 
+import { requiredRuns } from './macro-thresholds';
 import {
   MACRO_CLICK_SUPPORT,
   MACRO_HOUR_TOLERANCE,
@@ -453,6 +454,17 @@ interface GramEntry {
   items: string[];
   sessions: Set<number>;
   days: Set<string>;
+  /** Time the routine took, one entry per supporting session (first occurrence). */
+  spans: number[];
+}
+
+export interface SequenceOptions {
+  /**
+   * Cadence-side: replace the flat `minRuns` / `minDays` with duration-based repetition thresholds
+   * (under 30 s -> 3 runs, 30 s - 5 min -> 2, over 5 min -> 1; see macro-thresholds.ts). `minRuns`
+   * and `minDays` stay as upper bounds, so demo mode still lowers them.
+   */
+  durationThresholds?: boolean;
 }
 
 /**
@@ -466,14 +478,17 @@ export function detectBySequence(
   sessions: ObservedAction[][],
   minRuns: number,
   minDays: number,
+  options: SequenceOptions = {},
 ): MacroCandidate[] {
   /** canon URL -> the most recent concrete URL and its action, so replay opens a real page. */
   const concrete = new Map<string, ObservedAction>();
   const sequences: string[][] = [];
+  const sequenceTs: number[][] = [];
   const dayOfSession: string[] = [];
 
   sessions.forEach((session) => {
     const sequence: string[] = [];
+    const stamps: number[] = [];
     let lastCanon: string | null = null;
     for (const action of session) {
       if (action.kind !== 'open_url') continue;
@@ -483,8 +498,10 @@ export function detectBySequence(
       if (canon === lastCanon) continue;
       lastCanon = canon;
       sequence.push(canon);
+      stamps.push(action.ts);
     }
     sequences.push(sequence);
+    sequenceTs.push(stamps);
     dayOfSession.push(localDayKey(session[0]?.ts ?? 0));
   });
 
@@ -498,7 +515,9 @@ export function detectBySequence(
         const gramKey = items.join(' ');
         if (seenInSession.has(gramKey)) continue;
         seenInSession.add(gramKey);
-        const entry = grams.get(gramKey) ?? { items, sessions: new Set(), days: new Set() };
+        const entry = grams.get(gramKey) ?? { items, sessions: new Set(), days: new Set(), spans: [] };
+        const stamps = sequenceTs[sessionIndex]!;
+        entry.spans.push((stamps[i + n - 1] ?? 0) - (stamps[i] ?? 0));
         entry.sessions.add(sessionIndex);
         entry.days.add(dayOfSession[sessionIndex] ?? '');
         grams.set(gramKey, entry);
@@ -506,10 +525,12 @@ export function detectBySequence(
     }
   });
 
+  const runsFor = (v: GramEntry): number =>
+    options.durationThresholds ? Math.min(requiredRuns(median(v.spans)), minRuns) : minRuns;
   const kept = [...grams.values()].filter(
     (v) =>
-      v.sessions.size >= minRuns &&
-      v.days.size >= minDays &&
+      v.sessions.size >= runsFor(v) &&
+      v.days.size >= (options.durationThresholds ? Math.min(minDays, runsFor(v)) : minDays) &&
       new Set(v.items).size >= 2,
   );
 
