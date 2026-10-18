@@ -1,5 +1,7 @@
 import { RITUAL_NOTIFICATION_PREFIX, handleRitualNotificationButtonClicked } from './rituals';
 import { routeLeaderNotification } from './leader';
+import { handleFlipNotificationButtonClicked } from './focus-flip';
+import { FLIP_NOTIFICATION_PREFIX } from './notification-ids';
 import { LEADER_NOTIFICATION_PREFIX } from './macro-leaders';
 import { MACRO_NOTIFICATION_PREFIX, handleMacroNotificationButtonClicked } from './macros';
 import { SPACE_NOTIFICATION_PREFIX, handleSpaceNotificationButtonClicked } from './spaces';
@@ -12,6 +14,11 @@ export async function routeNotificationButtonClicked(notificationId: string, but
   }
   if (notificationId.startsWith(SPACE_NOTIFICATION_PREFIX)) {
     await handleSpaceNotificationButtonClicked(notificationId, buttonIndex);
+    return;
+  }
+
+  if (notificationId.startsWith(FLIP_NOTIFICATION_PREFIX)) {
+    await handleFlipNotificationButtonClicked(notificationId, buttonIndex);
     return;
   }
 

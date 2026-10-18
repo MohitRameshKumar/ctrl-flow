@@ -210,9 +210,9 @@ function createTypingTracker() {
 }
 
 /**
- * Focus Flip activity. Entirely inert unless the user has turned Focus Flip on (the flag is read from
- * storage and kept in sync). Carries no key values, positions or content: only "something happened"
- * and "it has been quiet for the flip delay".
+ * Focus Flip activity. Flipping needs the toggle; while it is off the only thing sent is a throttled
+ * "typing happened" ping so a writing / reference pair can be noticed and offered. Carries no key
+ * values, positions or content: only "something happened" and "it has been quiet for the flip delay".
  *
  * Idle is measured here, in the page, from the real last event: every keystroke / scroll / click
  * restarts one timer, and when it finally fires the background is told. The old design sent

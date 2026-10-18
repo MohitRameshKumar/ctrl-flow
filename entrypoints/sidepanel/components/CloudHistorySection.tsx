@@ -115,12 +115,12 @@ export function CloudHistorySection() {
     <div className="cloud-history">
       <label className="settings-row checkbox-row">
         <input type="checkbox" checked={enabled} onChange={(e) => void toggle(e.target.checked)} />
-        <span>Mirror activity history to TigerData</span>
+        <span>Sends event times, types, site domains and page titles to Tiger Data. Never typed text, URLs or page content.</span>
       </label>
       <p className="settings-hint">
-        Off by default. When on, only <strong>{SYNCED_FIELDS.join(', ')}</strong> are sent — never page
-        URLs, what you clicked, or what you typed. Your browsing history stays on this device; this is
-        a copy of the metadata, kept 90 days.
+        Off by default. Fields sent: <strong>{SYNCED_FIELDS.join(', ')}</strong>. Sites you exclude never send a
+        title: &quot;Never record&quot; sites send nothing, and &quot;Visit only&quot; sites send just the domain. Your browsing history stays
+        on this device; this is a copy of the metadata, kept 90 days.
       </p>
 
       {enabled && (

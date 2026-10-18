@@ -7,7 +7,7 @@
 // arriving at a tab and doing nothing never flips, and it cannot ping-pong while you are away. The
 // machine is stateless: "paused" simply means the tab you are on is not part of an active pair, and
 // the cycle resumes the moment you are on either tab of the pair and act again.
-import { domainOf, prettyDomain } from './macro-detection';
+import { appLabel } from './macro-detection';
 
 export type IdleKind = 'key' | 'scroll' | 'click';
 
@@ -75,7 +75,7 @@ export function decideFlip(ctx: CycleContext): FlipDecision {
 }
 
 export function siteLabel(url: string): string {
-  return prettyDomain(domainOf(url) ?? url);
+  return appLabel(url);
 }
 
 export type FlipStatusState = 'off' | 'no-pair' | 'cycling' | 'paused-other-tab' | 'paused-recording' | 'paused-macro';

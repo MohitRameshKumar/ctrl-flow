@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isExcludedUrl } from '@/lib/badge';
 import { getEvents } from '@/lib/db';
+import { getBlocklist } from '@/lib/privacy';
 import { LEADER_PANEL_KEY } from '@/lib/leader';
 import { consumeMacroPaletteRequest } from '@/lib/macros';
 import { setAutoRunEnabled, setRunMode, setRunSpeed } from '@/lib/settings';
@@ -30,6 +32,7 @@ export default function App() {
   const [autoRun, setAutoRun] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [paletteNonce, setPaletteNonce] = useState(0);
+  const [excluded, setExcluded] = useState(false);
 
   const refreshSettings = useCallback(async () => {
     const s = await chrome.storage.local.get<{
@@ -60,6 +63,12 @@ export default function App() {
     setFallbackNotice(s.calendarFallbackNotice ?? null);
   }, []);
 
+  /** Is the tab in front on an excluded site? Checked on a timer: the panel has no tab events of its own. */
+  const refreshExcluded = useCallback(async () => {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => [] as chrome.tabs.Tab[]);
+    setExcluded(isExcludedUrl(active?.url, await getBlocklist()));
+  }, []);
+
   const refreshCount = useCallback(async () => {
     const events = await getEvents(startOfToday(), Date.now());
     setTodayCount(events.length);
@@ -85,7 +94,11 @@ export default function App() {
     refreshCount();
     consumePaletteRequest();
     consumeLeaderFallback();
-    const interval = setInterval(refreshCount, 5000);
+    refreshExcluded();
+    const interval = setInterval(() => {
+      refreshCount();
+      refreshExcluded();
+    }, 2000);
     const onStorageChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
@@ -102,7 +115,7 @@ export default function App() {
       clearInterval(interval);
       chrome.storage.onChanged.removeListener(onStorageChanged);
     };
-  }, [refreshSettings, refreshCount, consumePaletteRequest, consumeLeaderFallback]);
+  }, [refreshSettings, refreshCount, refreshExcluded, consumePaletteRequest, consumeLeaderFallback]);
 
   const togglePause = () => {
     chrome.storage.local.set({ paused: !paused });
@@ -110,7 +123,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header paused={paused} todayCount={todayCount} onTogglePause={togglePause} />
+      <Header paused={paused} todayCount={todayCount} excluded={excluded} onTogglePause={togglePause} />
       <Tabs active={tab} onChange={setTab} />
 
       <main className="content">

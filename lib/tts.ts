@@ -12,7 +12,7 @@
  */
 import { runTask } from './ai';
 import { getTtsCached, putTtsCached } from './db';
-import { recordOutbound } from './outbound-log';
+import { recordOutbound, ttsText } from './outbound-log';
 
 const TIMEOUT_MS = 30000;
 
@@ -149,7 +149,7 @@ export async function speak(text: string, onEnd: () => void = () => {}): Promise
 
   if (!result.ok) {
     const reason = result.status === 429 ? 'monthly voice quota reached' : result.error;
-    await recordOutbound({ ts: Date.now(), kind: 'tts', chars: trimmed.length, via: 'browser', outcome: `failed: ${reason}` });
+    await recordOutbound({ ts: Date.now(), kind: 'tts', chars: trimmed.length, ...ttsText(trimmed), via: 'browser', outcome: `failed: ${reason}` });
     return fallback(reason);
   }
 
@@ -157,7 +157,7 @@ export async function speak(text: string, onEnd: () => void = () => {}): Promise
   try {
     blob = base64ToBlob(result.data.audio, result.data.mime || 'audio/mpeg');
   } catch (err) {
-    await recordOutbound({ ts: Date.now(), kind: 'tts', chars: trimmed.length, via: 'browser', outcome: 'failed: bad audio' });
+    await recordOutbound({ ts: Date.now(), kind: 'tts', chars: trimmed.length, ...ttsText(trimmed), via: 'browser', outcome: 'failed: bad audio' });
     return fallback(String(err));
   }
 
@@ -169,6 +169,7 @@ export async function speak(text: string, onEnd: () => void = () => {}): Promise
     ts: Date.now(),
     kind: 'tts',
     chars: trimmed.length,
+    ...ttsText(trimmed),
     via: 'elevenlabs',
     outcome: `generated ${Math.round(blob.size / 1024)} KB of audio`,
   });

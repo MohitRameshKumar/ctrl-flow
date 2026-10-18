@@ -7,7 +7,7 @@
  */
 
 import { getEvents } from './db';
-import { getBlocklist, isBlocklisted } from './privacy';
+import { getBlocklist, isUrlBlockedForMacros } from './privacy';
 import { eventToAction } from './macro-detection';
 import { replayMacro } from './macro-replay';
 import type { Macro, MacroRunResult, MacroSource, ObservedAction, ReplayOptions } from './types';
@@ -27,7 +27,7 @@ export const chromeActionSource: ActionSource = {
     const actions: ObservedAction[] = [];
     for (const event of events) {
       // Applied at read time too: a domain blocklisted after it was recorded must not be learned.
-      if (event.domain && isBlocklisted(event.domain, blocklist)) continue;
+      if (event.url && isUrlBlockedForMacros(event.url, blocklist)) continue;
       const action = eventToAction(event);
       if (action) actions.push(action);
     }

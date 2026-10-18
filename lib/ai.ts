@@ -1,3 +1,4 @@
+import { appendOutbound } from './outbound-history';
 import type { TaskName } from './types';
 
 const TIMEOUT_MS = 15000;
@@ -49,7 +50,9 @@ export async function runTask<T = unknown>(
   };
 
   const save = async (): Promise<void> => {
-    if (shouldRecord) await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+    if (!shouldRecord) return;
+    await chrome.storage.local.set({ [LAST_AI_REQUEST_KEY]: record });
+    await appendOutbound('ai', record, record.ts);
   };
 
   if (!proxyUrl || !token) {

@@ -62,6 +62,8 @@ export type ContentMessage =
   /** Overlay answering the "Repeat N steps?" preview. */
   | { type: 'leader_repeat_confirm' }
   | { type: 'leader_repeat_cancel' }
+  /** The toast's "Assign K" button: give a just-saved macro the offered letter. */
+  | { type: 'leader_assign_letter'; macroId: number; letter: string }
   /** A copy happened in the page (no content). */
   | { type: 'copy'; frameUrl?: string };
 
@@ -79,13 +81,23 @@ export interface FlipPair {
   active: boolean;
   /** Set by "Pair current tab with…": active immediately, no learning needed. */
   manual?: boolean;
+  /** The "pair found" notification (or the toggle already being on) has dealt with this pair. */
+  announced?: boolean;
   updatedAt: number;
 }
 
 export interface BlocklistConfig {
+  /** "Never record": nothing about a visit is kept. */
   domains: string[];
   substrings: string[];
+  /**
+   * "Visit only": the site's root URL is recorded when you open it, and nothing else (no title, path,
+   * clicks, fields or typing). Absent on blocklists saved before this existed.
+   */
+  visitOnly?: string[];
 }
+
+export type ExclusionMode = 'never' | 'visit-only';
 
 /** A single occurrence of a (possibly recurring) calendar meeting. */
 export interface CalendarEvent {

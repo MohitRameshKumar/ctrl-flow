@@ -12,6 +12,13 @@ export const MAX_TITLE_CHARS = 120;
 /** Minimum direct switches for two tabs to count as "used together" in the offline fallback. */
 export const OFFLINE_MERGE_MIN_SWITCHES = 3;
 
+/** "Real co-usage" for joining a space is judged over the last few hours, not the whole history. */
+export const RECENT_CO_USAGE_MS = 4 * 60 * 60 * 1000;
+/** A tab not activated for this long is ignored by Spaces entirely. */
+export const STALE_TAB_MS = 24 * 60 * 60 * 1000;
+/** A space card shows this many tabs (most recently used first); the rest are "+N more". */
+export const SPACE_CARD_TABS = 5;
+
 export interface Activation {
   url: string;
   ts: number;
@@ -140,4 +147,33 @@ export function groupByCoUsage<T>(
     groups.set(root, list);
   });
   return [...groups.values()];
+}
+
+/**
+ * The URLs that were really used together with another URL in `urls`: at least one direct switch, or
+ * two near-in-time activations (the same bar `edgesForUrls` sets for sending an edge to the AI).
+ * Everything else has no co-usage and does not join a space.
+ */
+export function urlsWithCoUsage(urls: string[], stats: Map<string, PairStat>): Set<string> {
+  const out = new Set<string>();
+  for (let a = 0; a < urls.length; a++) {
+    for (let b = a + 1; b < urls.length; b++) {
+      const stat = stats.get(pairStatKey(urls[a]!, urls[b]!));
+      if (stat && (stat.switches >= 1 || stat.near >= 2)) {
+        out.add(urls[a]!);
+        out.add(urls[b]!);
+      }
+    }
+  }
+  return out;
+}
+
+/** Newest-used first, then cut to `limit`; `more` is how many were left out. Items with no recorded use sort last. */
+export function topByRecentUse<T extends { url: string }>(
+  items: T[],
+  lastUsed: Map<string, number>,
+  limit = SPACE_CARD_TABS,
+): { shown: T[]; more: number } {
+  const sorted = [...items].sort((a, b) => (lastUsed.get(b.url) ?? 0) - (lastUsed.get(a.url) ?? 0));
+  return { shown: sorted.slice(0, limit), more: Math.max(0, sorted.length - limit) };
 }

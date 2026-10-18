@@ -19,7 +19,9 @@ import {
   recordMacroFromRecentActivity,
   runMacro,
 } from './macros';
-import { getBlocklist, isBlocklisted } from './privacy';
+import { keepFeedback, type KeepFeedback, type LeaderToastMessage } from './keep-feedback';
+import { allowNotification } from './notify';
+import { getBlocklist, isUrlBlockedForMacros } from './privacy';
 import type { Macro, MacroCandidate } from './types';
 import { isTerminal, readRunState, sendRunCommand } from './macro-run-channel';
 
@@ -63,11 +65,7 @@ async function markConsumed(ts = Date.now()): Promise<void> {
 async function recentActions(since: number, now: number) {
   const [actions, blocklist] = await Promise.all([chromeActionSource.getActions(since, now), getBlocklist()]);
   return actions.filter((a) => {
-    try {
-      return !isBlocklisted(new URL(a.target).hostname, blocklist);
-    } catch {
-      return true;
-    }
+    return !isUrlBlockedForMacros(a.target, blocklist);
   });
 }
 
@@ -122,7 +120,7 @@ export async function previewRepeat(ctx: LeaderContext = {}): Promise<void> {
 }
 
 /** R, step 2 (Enter): run exactly what the preview showed. */
-export async function confirmRepeat(): Promise<void> {
+export async function confirmRepeat(ctx: LeaderContext = {}): Promise<void> {
   const pending = await readSession<PendingRepeat>(PENDING_REPEAT_KEY);
   await chrome.storage.session.remove(PENDING_REPEAT_KEY);
   if (!pending || Date.now() - pending.createdAt > PENDING_REPEAT_MAX_AGE_MS) {
@@ -149,7 +147,7 @@ export async function confirmRepeat(): Promise<void> {
       return;
     }
     await markConsumed();
-    if (plan.via === 'segment' && macroSaved) await afterSave?.(macroSaved);
+    if (plan.via === 'segment' && macroSaved) await reportKeep(macroSaved, ctx);
     await runMacro(macroId);
   } catch (err) {
     await tell('Could not repeat', err instanceof Error ? err.message : String(err));
@@ -173,12 +171,51 @@ export async function handleLeaderNotificationButtonClicked(notificationId: stri
 export const repeatLastMacro = previewRepeat;
 
 /**
- * Called after K / M / R save a macro. Set by `leader.ts` (which owns letter assignment) so this
- * file need not import it: leader.ts already imports this one.
+ * Set by `leader.ts` (which owns letter assignment, and is imported by this file's callers) so this
+ * file need not import it: it suggests a free letter for a just-saved macro, or null.
  */
-let afterSave: ((macro: Macro) => Promise<void>) | undefined;
-export function setAfterSaveHook(fn: (macro: Macro) => Promise<void>): void {
-  afterSave = fn;
+let suggestLetterFor: ((macro: Macro) => Promise<string | null>) | undefined;
+export function setLetterSuggester(fn: (macro: Macro) => Promise<string | null>): void {
+  suggestLetterFor = fn;
+}
+
+/** Shows the toast in the page the key was pressed in; silently skipped where no overlay is mounted. */
+async function toastTo(tabId: number | undefined, fb: KeepFeedback): Promise<void> {
+  if (tabId === undefined) return;
+  const message: LeaderToastMessage = { type: 'leader_toast', title: fb.title, message: fb.message, ...(fb.assign ? { assign: fb.assign } : {}) };
+  try {
+    await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+  } catch {
+    /* no overlay in this tab (chrome:// page, store page, tab closed): the notification still goes out */
+  }
+}
+
+/**
+ * K, R and M always answer: a toast in the page plus a notification. A save offers a letter with one
+ * button; an empty segment says why. The saved notification honours its Settings toggle but not the
+ * 10-minute throttle (the user just asked for it); "nothing to keep" is always shown.
+ */
+async function reportKeep(macro: Macro | null, ctx: LeaderContext): Promise<void> {
+  const letter = macro && !macro.letter ? ((await suggestLetterFor?.(macro)) ?? null) : null;
+  const fb = keepFeedback(macro, letter);
+  await toastTo(ctx.tabId, fb);
+  if (fb.kind === 'saved' && !(await allowNotification('macro-saved', { userInitiated: true }))) return;
+  try {
+    if (fb.assign) {
+      const L = fb.assign.letter.toUpperCase();
+      await chrome.notifications.create(`${LEADER_NOTIFICATION_PREFIX}letter:${fb.assign.macroId}:${fb.assign.letter}`, {
+        type: 'basic',
+        iconUrl: '/icon/128.png',
+        title: fb.title,
+        message: fb.message,
+        buttons: [{ title: `Assign ${L}` }, { title: 'Skip' }],
+      });
+    } else {
+      await tell(fb.title, fb.message);
+    }
+  } catch (err) {
+    console.warn('[cadence] keep notification failed', err);
+  }
 }
 
 /** Direct shortcuts: the "Run macro slot N" commands run whichever macro holds slot N. */
@@ -196,7 +233,7 @@ export async function runMacroSlot(slot: number): Promise<void> {
 }
 
 /** K: keep the last ~30 seconds of activity as a macro. */
-export async function keepLastAsMacro(): Promise<void> {
+export async function keepLastAsMacro(ctx: LeaderContext = {}): Promise<void> {
   const now = Date.now();
   const consumed = (await readSession<number>(CONSUMED_KEY)) ?? 0;
   const macro = await recordMacroFromRecentActivity({
@@ -207,16 +244,11 @@ export async function keepLastAsMacro(): Promise<void> {
     nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
   });
   if (macro) await markConsumed(now);
-  if (!macro) {
-    await tell('Nothing to keep', 'No repeatable steps in the last 30 seconds.');
-    return;
-  }
-  await tell('Macro saved', macro.name);
-  await afterSave?.(macro);
+  await reportKeep(macro, ctx);
 }
 
 /** M: first press marks the start; the second keeps everything since as a macro. */
-export async function toggleMark(): Promise<void> {
+export async function toggleMark(ctx: LeaderContext = {}): Promise<void> {
   const { [MARK_START_KEY]: start } = await chrome.storage.session.get<Record<string, number | undefined>>(MARK_START_KEY);
   const now = Date.now();
   if (start === undefined || now - start > MARK_MAX_AGE_MS) {
@@ -233,12 +265,7 @@ export async function toggleMark(): Promise<void> {
     nameFor: (c, taken) => nameOpenMacro(openUrls(c), taken),
   });
   await markConsumed(now);
-  if (!macro) {
-    await tell('Nothing to keep', 'No repeatable steps between the two marks.');
-    return;
-  }
-  await tell('Macro saved', macro.name);
-  await afterSave?.(macro);
+  await reportKeep(macro, ctx);
 }
 
 /**

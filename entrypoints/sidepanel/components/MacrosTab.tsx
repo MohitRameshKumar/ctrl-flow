@@ -242,6 +242,9 @@ function AddStepControls({ macroId, urls, onAdded }: {
   );
 }
 
+/** A macro saved this recently flashes once so it is easy to spot at the top of the list. */
+const FRESH_MACRO_MS = 15_000;
+
 function SlotControl({ macro, onRefresh }: { macro: Macro; onRefresh: () => void }) {
   const slot = macro.slot ?? 0;
   const shortcut = useCommandShortcut(`run-macro-slot-${slot || 1}`);
@@ -328,7 +331,7 @@ function MacroRow({
   const reuse = macro.reuseOpenTabs === true;
 
   return (
-    <section className={highlighted ? 'mrow highlight' : 'mrow'}>
+    <section className={['mrow', highlighted ? 'highlight' : '', Date.now() - macro.createdAt < FRESH_MACRO_MS ? 'fresh' : ''].filter(Boolean).join(' ')}>
       <div className="row-line">
         <button className={open ? 'chev open' : 'chev'} aria-expanded={open} aria-label={open ? 'Hide steps' : 'Show steps'} onClick={() => setOpen((v) => !v)}>
           <Icon name="chevron" size={14} />
@@ -501,7 +504,8 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
 
   // At most two suggestions, snoozed / merged / best-first; saved macros are listed above them.
   const suggested = useMemo(() => visibleSuggestions(macros, Date.now()), [macros]);
-  const saved = useMemo(() => savedMacros(macros), [macros]);
+  // Newest first, so a macro K / R / M just saved is at the top (and flashes once; see `.mrow.fresh`).
+  const saved = useMemo(() => [...savedMacros(macros)].sort((a, b) => b.createdAt - a.createdAt), [macros]);
 
   const filtered = useMemo(() => {
     const q = splitQuery(query).words.join(' ').toLowerCase();

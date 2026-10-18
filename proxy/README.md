@@ -43,11 +43,16 @@ treats that as "cloud history is unavailable" and carries on.
 **1. Create a service.** A free Tiger Cloud service is enough: 750 MB, no credit card, and the
 full TimescaleDB extension. Note that it goes **read-only** past 750 MB.
 
-**2. Create the schema.** Run this once in the Tiger Cloud SQL console:
+**2. Create the schema.** Run these in the Tiger Cloud SQL console. **Run each statement on its own**
+(one at a time, not as a pasted batch): the console wraps a batch in a transaction, and
+`create_hypertable ... migrate_data` and `CREATE MATERIALIZED VIEW ... timescaledb.continuous` both refuse
+to run inside one. If a statement fails, fix it before running the next; later ones depend on it.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS timescaledb;
+```
 
+```sql
 CREATE TABLE activity_events (
   device_id uuid        NOT NULL,
   local_id  bigint      NOT NULL,   -- the client's Dexie events.id, for idempotent re-sync
@@ -57,20 +62,38 @@ CREATE TABLE activity_events (
   title     text,
   PRIMARY KEY (device_id, local_id, ts)   -- a hypertable PK must include the partition column
 );
+```
 
-SELECT create_hypertable('activity_events', by_range('ts'));
+Turn it into a hypertable. A plain table also accepts inserts, so this is easy to miss: without it the
+sync works but the aggregate below cannot be created. `migrate_data => true` covers rows already in
+the table, and is harmless on an empty one.
 
+```sql
+SELECT create_hypertable('activity_events', by_range('ts'), migrate_data => true);
+```
+
+The continuous aggregate must group by the `time_bucket(...)` expression itself, not its alias:
+
+```sql
 CREATE MATERIALIZED VIEW activity_daily
 WITH (timescaledb.continuous) AS
-SELECT device_id, time_bucket('1 day', ts) AS day, kind, domain, count(*) AS events
+SELECT device_id,
+       time_bucket('1 day', ts) AS day,
+       kind,
+       domain,
+       count(*) AS events
 FROM activity_events
-GROUP BY device_id, day, kind, domain;
+GROUP BY device_id, time_bucket('1 day', ts), kind, domain;
+```
 
+```sql
 SELECT add_continuous_aggregate_policy('activity_daily',
   start_offset      => INTERVAL '7 days',
   end_offset        => INTERVAL '1 hour',
   schedule_interval => INTERVAL '1 hour');
+```
 
+```sql
 -- Keeps the service under the free tier's 750 MB cap with no app-side code.
 SELECT add_retention_policy('activity_events', INTERVAL '90 days');
 ```

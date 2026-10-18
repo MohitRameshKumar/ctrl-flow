@@ -2,7 +2,8 @@
 // It decides *which window of activity* to repeat and how to describe it; building and running go
 // through the macro feature's own functions (`recordMacroFromRecentActivity`, `runMacro`), the same
 // ones Leader K uses, and both pass `refineSegment` so they cut the same segment the same way.
-import { candidateFromSession, domainOf, isUsableSession, prettyDomain, sessionize } from './macro-detection';
+import { appLabel, candidateFromSession, isUsableSession, sessionize } from './macro-detection';
+import { samePage } from './sites';
 import type { Macro, MacroCandidate, ObservedAction } from './types';
 
 /** Idle gap that ends a segment. Much shorter than detection's 3 minutes: R means "what I just did". */
@@ -13,6 +14,12 @@ export const SEGMENT_MAX_AGE_MS = 10 * 60 * 1000;
 export const REDIRECT_CHAIN_MS = 4 * 1000;
 /** An in-page (history API) navigation only counts if the user clicked in that tab this recently. */
 export const SPA_CLICK_WINDOW_MS = 5 * 1000;
+/**
+ * The same page opened twice in a row is one step, however it got there: a new tab plus the redirect
+ * inside it, `/u/0/h` then `/h`, or a sign-in hop that ended where it started. Wider than the
+ * same-tab chain because Google's account redirects take several seconds and can change the tab.
+ */
+export const SAME_PAGE_COLLAPSE_MS = 60 * 1000;
 export const PREVIEW_MAX_STEPS = 10;
 /** Page loads from a replay's tabs can land just after the run is recorded as finished. */
 export const REPLAY_TAIL_MS = 5 * 1000;
@@ -59,7 +66,26 @@ export function refineSegment(actions: ObservedAction[]): ObservedAction[] {
     lastOpenIndexByContext.set(a.contextId, out.length);
     out.push(a);
   }
-  return out;
+
+  // Second pass: the same page twice in a row, across tabs or after a slow hop, is one step.
+  const collapsed: ObservedAction[] = [];
+  let lastOpen: ObservedAction | undefined;
+  let lastOpenAt = -1;
+  for (const a of out) {
+    if (a.kind !== 'open_url') {
+      collapsed.push(a);
+      continue;
+    }
+    if (lastOpen && lastOpenAt >= 0 && !a.spa && samePage(lastOpen.target, a.target) && a.ts - lastOpen.ts <= SAME_PAGE_COLLAPSE_MS) {
+      collapsed[lastOpenAt] = a; // keep the later URL: it is where the page ended up
+      lastOpen = a;
+      continue;
+    }
+    lastOpen = a;
+    lastOpenAt = collapsed.length;
+    collapsed.push(a);
+  }
+  return collapsed;
 }
 
 export interface RepeatBoundaries {
@@ -111,7 +137,7 @@ export function planRepeat(segment: RepeatSegment | null, macros: Macro[]): Repe
 const SITE_ALIASES: Record<string, string> = { nytimes: 'NYT', wsj: 'WSJ', bbc: 'BBC', cnn: 'CNN' };
 
 export function siteName(url: string): string {
-  const pretty = prettyDomain(domainOf(url) ?? url);
+  const pretty = appLabel(url);
   return SITE_ALIASES[pretty.toLowerCase()] ?? pretty;
 }
 

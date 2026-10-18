@@ -15,7 +15,7 @@ import { clickBySelector, typeIntoSelector } from './macro-injected';
 import type { OpenedTabInfo, RunHost, TabCondition } from './macro-executor';
 import { checkTypedStep } from './macro-privacy';
 import { writeRunState } from './macro-run-channel';
-import { getBlocklist, isUrlBlocked } from './privacy';
+import { getBlocklist, isUrlBlockedForMacros } from './privacy';
 import { findOpenTabIdForUrl, focusTab as focusTabById, waitForTabComplete } from './tabs';
 import type { MacroRunState, RunCommandName } from './types';
 
@@ -181,7 +181,7 @@ export function createChromeHost(opts: ChromeHostOptions): RunHost {
     },
 
     async isUrlBlocked(url) {
-      return isUrlBlocked(url, await getBlocklist());
+      return isUrlBlockedForMacros(url, await getBlocklist());
     },
 
     async type(tabId, selector, text) {
