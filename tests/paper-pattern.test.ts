@@ -4,6 +4,7 @@ import { PAPER_LOOKUP_WINDOW_MS, detectPaperLookup, isPdfSearchUrl, isScholarlyH
 import { cleanSelection, readSelection } from '@/lib/selection';
 import { buildFindPdfCommand, buildFindPdfSuggestion, commandSteps } from '@/lib/find-pdf-command';
 import { visibleSuggestions } from '@/lib/macro-suggestions';
+import { pickSelection } from '@/lib/find-pdf';
 import { macro, openStep } from './helpers';
 import type { CadenceEvent } from '@/lib/types';
 
@@ -173,5 +174,22 @@ describe('the saved Find PDF command', () => {
     const shown = visibleSuggestions([...routes, cmd], Date.now());
     expect(shown).toHaveLength(2);
     expect(shown[0]!.id).toBe(99);
+  });
+});
+
+describe('selections from embedded frames respect exclusions', () => {
+  const blocklist = { domains: ['bank.example'], substrings: [] };
+
+  it('skips a frame from an excluded site even when the top page is allowed', () => {
+    const frames = [
+      { text: 'secret statement text', href: 'https://secure.bank.example/frame' },
+      { text: 'Attention Is All You Need', href: 'https://en.wikipedia.org/wiki/Transformer' },
+    ];
+    expect(pickSelection(frames, blocklist)).toBe('Attention Is All You Need');
+    expect(pickSelection([frames[0]!], blocklist)).toBe('');
+  });
+
+  it('skips frames whose URL cannot be normalized (about:blank, data:), and empty selections', () => {
+    expect(pickSelection([{ text: 'x', href: 'about:blank' }, { text: 'y', href: 'data:text/html,hi' }, { text: '', href: 'https://a.com/' }], blocklist)).toBe('');
   });
 });

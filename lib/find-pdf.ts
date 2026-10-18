@@ -11,6 +11,7 @@ import { normalizeUrl } from './normalize';
 import { recordOutbound } from './outbound-log';
 import { SOURCE_NAMES, findPdf, sanitizeFilename, type LookupLog, type SourceId } from './pdf-resolver';
 import { getBlocklist, isBlocklisted, isPaused } from './privacy';
+import type { BlocklistConfig } from './types';
 import { cleanSelection } from './selection';
 
 export type FindPdfOutcome = 'downloaded' | 'searched' | 'blocked' | 'paused' | 'empty';
@@ -35,15 +36,34 @@ async function tell(title: string, message: string, id?: string, buttons?: strin
 }
 
 /** Injected into the page: must be self-contained. Mirrors `readSelection` in selection.ts. */
-function readSelectionInPage(): string {
+function readSelectionInPage(): { text: string; href: string } {
+  const href = location.href; // lets the caller drop frames from excluded sites
   const el = document.activeElement;
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    if (el instanceof HTMLInputElement && (el.type === 'password' || el.type === 'hidden')) return '';
+    if (el instanceof HTMLInputElement && (el.type === 'password' || el.type === 'hidden')) return { text: '', href };
     const start = el.selectionStart ?? 0;
     const end = el.selectionEnd ?? 0;
-    if (end > start) return el.value.slice(start, end);
+    if (end > start) return { text: el.value.slice(start, end), href };
   }
-  return window.getSelection()?.toString() ?? '';
+  return { text: window.getSelection()?.toString() ?? '', href };
+}
+
+/**
+ * First non-empty selection among the frames' results, skipping any frame that is on an excluded site
+ * or whose URL cannot be normalized (about:blank, data:, chrome:). An embedded frame from a blocked
+ * origin on an allowed page must not leak its selection into a lookup. Pure.
+ */
+export function pickSelection(
+  results: { text: string; href: string }[],
+  blocklist: BlocklistConfig,
+): string {
+  for (const r of results) {
+    const page = normalizeUrl(r.href);
+    if (!page || isBlocklisted(page.domain, blocklist)) continue;
+    const text = cleanSelection(r.text);
+    if (text) return text;
+  }
+  return '';
 }
 
 /**
@@ -53,10 +73,10 @@ function readSelectionInPage(): string {
 export async function readSelectionFromTab(tabId: number): Promise<string> {
   try {
     const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: readSelectionInPage });
-    for (const r of results) {
-      const text = cleanSelection(typeof r.result === 'string' ? r.result : '');
-      if (text) return text;
-    }
+    return pickSelection(
+      results.flatMap((r) => (r.result && typeof r.result.text === 'string' ? [r.result] : [])),
+      await getBlocklist(),
+    );
   } catch {
     /* chrome://, the Web Store, or a closed tab */
   }
