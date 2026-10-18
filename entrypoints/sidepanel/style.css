@@ -121,10 +121,10 @@ h4 {
 /* The logo is a knockout mask painted in the text color: light ink on the dark panel, dark ink on light. */
 .app-logo {
   height: 26px;
-  aspect-ratio: 611 / 289;
+  aspect-ratio: 304.87 / 147.25;
   background-color: var(--ink);
-  -webkit-mask: image-set(url('/brand/logo-mono@2x.png') 2x, url('/brand/logo-mono@3x.png') 3x) center / contain no-repeat;
-  mask: image-set(url('/brand/logo-mono@2x.png') 2x, url('/brand/logo-mono@3x.png') 3x) center / contain no-repeat;
+  -webkit-mask: url('/brand/logo-mono.svg') center / contain no-repeat;
+  mask: url('/brand/logo-mono.svg') center / contain no-repeat;
 }
 
 .app-header-right {
