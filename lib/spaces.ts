@@ -31,7 +31,7 @@ import { normalizeUrl } from './normalize';
 import { appLabel } from './macro-detection';
 import { isTransientUrl } from './sites';
 import { findOpenTabIdsForUrls, focusTab, openUrlsAsGroup } from './tabs';
-import { getBlocklist, isBlocklisted } from './privacy';
+import { getBlocklist, isBlocklisted, isUrlBlocked } from './privacy';
 import { checkForSwitch, neverSwitchForSpace, recordSwitchOffer, type SwitchCandidate } from './switch-detection';
 import type {
   AssignTabsInput,
@@ -79,6 +79,8 @@ async function getCandidateUrls(): Promise<Candidate[]> {
   const events = await getEventsByKind('tab_activated', now - STALE_TAB_MS, now);
   for (const e of events) {
     if (!e.url || e.programmatic || candidates.has(e.url) || isTransientUrl(e.url)) continue;
+    // Re-applied at read time: a site excluded after it was recorded, and visit-only roots, must not reach the AI.
+    if (isUrlBlocked(e.url, blocklist)) continue;
     candidates.set(e.url, { url: e.url, title: e.title });
   }
 
@@ -223,16 +225,17 @@ interface UsageSignals {
 async function gatherUsageSignals(): Promise<UsageSignals> {
   const now = Date.now();
   const from = now - ACTIVATION_WINDOW_MS;
-  const [activated, typing] = await Promise.all([
+  const [activated, typing, blocklist] = await Promise.all([
     getEventsByKind('tab_activated', from, now),
     getEventsByKind('typing_burst', from, now),
+    getBlocklist(),
   ]);
   const activations = activated
-    .filter((e): e is typeof e & { url: string } => !!e.url && !e.programmatic)
+    .filter((e): e is typeof e & { url: string } => !!e.url && !e.programmatic && !isUrlBlocked(e.url, blocklist))
     .map((e) => ({ url: e.url, ts: e.ts }));
   const burstsByUrl = new Map<string, number>();
   for (const e of typing) {
-    if (e.url) burstsByUrl.set(e.url, (burstsByUrl.get(e.url) ?? 0) + 1);
+    if (e.url && !isUrlBlocked(e.url, blocklist)) burstsByUrl.set(e.url, (burstsByUrl.get(e.url) ?? 0) + 1);
   }
   const recentCut = now - RECENT_CO_USAGE_MS;
   return {

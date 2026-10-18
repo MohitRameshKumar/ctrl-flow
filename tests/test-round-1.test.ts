@@ -354,3 +354,12 @@ describe('9-10. outbound history and read-aloud text', () => {
     expect(long.truncated).toBe(true);
   });
 });
+
+describe('Spaces never hands excluded sites to the AI', () => {
+  it('isUrlBlocked covers visit-only roots and never-record pages (used on stored events at read time)', async () => {
+    const { isUrlBlocked } = await import('@/lib/privacy');
+    expect(isUrlBlocked(GMAIL, DEFAULT_BLOCKLIST)).toBe(true);
+    expect(isUrlBlocked('https://chase.com/accounts', DEFAULT_BLOCKLIST)).toBe(true);
+    expect(isUrlBlocked('https://github.com/x', DEFAULT_BLOCKLIST)).toBe(false);
+  });
+});
