@@ -30,7 +30,7 @@
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
-      "id": "REPLACE_WITH_YOUR_HYPERDRIVE_ID",
+      "id": "9ed2f6d36e63411b9f60fbcf3992b1bb",
       // Used by `wrangler dev` only; ignored in production. Put the real connection string in
       // proxy/.dev.vars as WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE instead of here,
       // so it never lands in git.
