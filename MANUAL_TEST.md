@@ -102,17 +102,18 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
 12. [ ] Pause recording, repeat a routine 3×, unpause.
     **Expected:** no macro is suggested from paused activity.
 
-## 7. Leader overlay (E, P, /)
-1. [ ] Press Ctrl/⌘+Shift+Space on a normal page.
-   **Expected:** an overlay lists letters: **E** open panel, **S** stop, **P** pause, **/** search, **R / K / M** macro actions, then space letters, then macro letters. **No "coming soon" entries.**
-2. [ ] Press **E**. **Expected:** side panel opens; overlay closes.
-3. [ ] Leader → **P**. **Expected:** recording toggles paused/resumed (badge + header update). Press again to restore.
-4. [ ] Leader → **/**, type part of a space or ritual name, ↑/↓, Enter.
-   **Expected:** filtered list; Enter switches to that space / opens that ritual's docs. Esc closes.
-5. [ ] Open the overlay on `chrome://extensions` (no content script there).
-   **Expected:** the side panel opens with the Leader keys section highlighted; clicking or typing a letter works.
-6. [ ] In Leader keys settings, change **P** to another letter; try changing it to **R**.
-   **Expected:** change accepted for a free letter; **R** rejected (already used/reserved).
+## 7. Leader pie menu (R K M S P /, E)
+1. [ ] Press ⌘⇧Y on a normal site (e.g. GitHub).
+   **Expected:** a ring menu rises from the bottom center (no animation if the OS asks for reduced motion). Slices: Repeat R, Keep K, Mark M, Stop S, Pause P, Search /, then your lettered macros and spaces. It does **not** close by itself after 2 s; it stays until you choose, press Esc, or click far outside (10 s of no input closes it).
+2. [ ] Move the mouse over slices. **Expected:** the hovered slice highlights and the center shows its description and letter.
+3. [ ] Select three ways: press a letter; click a slice; move the mouse toward a slice (even past the ring) and click. **Expected:** all three run that slice. Clicking the empty center does nothing; clicking well outside the ring closes it.
+4. [ ] With more than 8 items (add letters to several macros/spaces). **Expected:** the 8th slice is "More…" and opens the search list; every item still runs on its letter.
+5. [ ] Press R after a 3-page task. **Expected:** the center shows "Repeat 3 steps: Open … Enter run & save · Esc cancel". Enter runs; Esc cancels.
+6. [ ] Press **E**. **Expected:** the center says to click the Cadence toolbar icon.
+7. [ ] Pause (P) toggles recording; Search (/) → type a macro/space/ritual name → Enter runs it.
+8. [ ] Switch the OS between light and dark. **Expected:** the pie follows it; text stays crisp when you zoom the page to 200%.
+9. [ ] Open the debug event list after using the pie. **Expected:** no events from clicking or typing in it.
+10. [ ] ⌘⇧Y on `chrome://version`. **Expected:** the side panel opens on Settings (same keycap styling).
 
 ## 8. Standup and read aloud
 1. [ ] Standup tab → choose a range (**Today** / **Yesterday**) → **Generate**.
@@ -157,3 +158,10 @@ Useful tools: service-worker console (extensions page → Cadence → *service w
    **Expected:** that domain appears nowhere in the request or the output.
 5. [ ] Typed values: Add step → Type text: `hello` saves; `password: x`, a card number, or text on an excluded page is refused with a reason. Check the debug event list.
    **Expected:** no typed text in any event (only key counts / field names).
+
+## 13. Macro letters, slots, quieter suggestions, panel
+1. [ ] Save a macro (R + Enter, K, a suggestion, or "keep last 30 s"). **Expected:** a notification (R/K) or an inline prompt (panel) offers "Assign G?" with one click. Assign it.
+2. [ ] Reload the extension, press ⌘⇧Y, then G. **Expected:** G is a slice in the pie and runs the macro. If a run fails you see a notification saying why (it used to fail silently).
+3. [ ] Rebind: Macros tab → row menu → *Direct shortcut slot* → Slot 1. At `chrome://extensions/shortcuts` bind "Run macro slot 1" to ⌘⇧G. **Expected:** pressing it runs that macro; an empty slot says so. (Requires the four slot commands in the manifest.)
+4. [ ] Macros tab. **Expected:** saved macros first, then at most 2 suggestions, then recent runs. Tab-switching between already-open tabs never produces a suggestion. A 10 s routine needs 3 repeats; 30 s–5 min needs 2; over 5 min needs 1. **Not now** hides a suggestion for a day, then longer after each dismissal; **Never** is permanent, even after 14 days.
+5. [ ] Walk Rituals, Spaces, Macros, Standup and Settings at ~380 px. **Expected:** single-line rows with truncation (full text on hover), icon buttons with tooltips, collapsible Spaces and Settings groups, no horizontal scroll, little vertical scrolling.

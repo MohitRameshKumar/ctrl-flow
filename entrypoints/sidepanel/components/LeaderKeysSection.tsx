@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LEADER_COMMAND } from '@/lib/shortcuts';
-import { ShortcutLabel } from './ShortcutLabel';
+import { ShortcutLabel, openShortcutSettings } from './ShortcutLabel';
+import { Group, Keycap } from './ui';
 import { listRegistrations, type MenuItem, type SearchItem } from '@/lib/hotkeys';
 import {
   LEADER_PANEL_KEY,
@@ -66,21 +67,20 @@ export function LeaderKeysSection() {
   const builtins = listRegistrations();
 
   return (
-    <section className={fallback ? 'settings leader-keys leader-fallback' : 'settings leader-keys'}>
-      <h3>Leader keys</h3>
-      <div className="doc-seen">
-        Press the Cadence shortcut <ShortcutLabel command={LEADER_COMMAND} />, then a letter. Change it at
-        chrome://extensions/shortcuts.
+    <div className={fallback ? 'settings-block leader-fallback' : 'settings-block'}>
+      <div className="hint">
+        Press <ShortcutLabel command={LEADER_COMMAND} /> to open the menu, then a letter. Change the key in Chrome
+        {' '}<button className="btn-link" onClick={openShortcutSettings}>shortcut settings</button>.
       </div>
       {fallback && <div className="notice">This page can&apos;t show the overlay. Click a letter below or type it.</div>}
 
       <ul className="leader-list">
         {menu.map((i) => (
           <li key={`${i.kind}-${i.id}`}>
-            <button className="btn letter-btn" disabled={i.id === 'search'} onClick={() => run(i.letter)}>
+            <button className="keycap btn-key" title={`Run: ${i.label}`} disabled={i.id === 'search'} onClick={() => run(i.letter)}>
               {i.letter.toUpperCase()}
             </button>
-            <span>{i.label}</span>
+            <span className="leader-label" title={i.label}>{i.short ?? i.label}</span>
           </li>
         ))}
       </ul>
@@ -100,15 +100,15 @@ export function LeaderKeysSection() {
         </div>
       )}
 
-      <h4>Change a letter</h4>
+      <Group title="Change a letter" defaultOpen={false} nested>
       {builtins.map((b) => {
         const current = menu.find((i) => i.kind === 'action' && i.id === b.id)?.letter ?? b.letter;
         return (
           <label key={b.id} className="settings-row">
-            <span>
-              {b.label} ({current.toUpperCase()})
+            <span className="row-text" title={b.label}>
+              {b.short ?? b.label} <Keycap>{current.toUpperCase()}</Keycap>
             </span>
-            <span>
+            <span className="inline">
               <input
                 className="letter-input"
                 maxLength={1}
@@ -116,15 +116,16 @@ export function LeaderKeysSection() {
                 value={drafts[b.id] ?? ''}
                 onChange={(e) => setDrafts((d) => ({ ...d, [b.id]: e.target.value }))}
               />
-              <button className="btn" disabled={!drafts[b.id]} onClick={() => change(b.id)}>
+              <button className="btn sm" disabled={!drafts[b.id]} onClick={() => change(b.id)}>
                 Set
               </button>
             </span>
           </label>
         );
       })}
+      </Group>
       {error && <div className="letter-error">{error}</div>}
-    </section>
+    </div>
   );
 }
 

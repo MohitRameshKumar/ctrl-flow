@@ -15,29 +15,33 @@ import {
 import type { Space, SpaceUrl } from '@/lib/types';
 import { SpaceLetterControl } from './SpaceLetterControl';
 import { SuggestionCard } from './SuggestionCard';
+import { Icon, IconButton, Keycap, Menu, SiteTile } from './ui';
 
 interface SpaceWithUrls extends Space {
   urls: SpaceUrl[];
 }
 
-function statusLabel(status: Space['status']): string {
-  if (status === 'auto_offline') return 'auto (offline)';
-  if (status === 'user') return 'user';
-  return 'ai';
-}
-
-function SpaceNameInput({ space, onRename }: { space: Space; onRename: (name: string) => void }) {
+function SpaceNameInput({ space, onRename, onDone }: { space: Space; onRename: (name: string) => void; onDone: () => void }) {
   const [value, setValue] = useState(space.name);
   useEffect(() => setValue(space.name), [space.name]);
 
+  const commit = () => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== space.name) onRename(trimmed);
+    onDone();
+  };
+
   return (
     <input
-      className="space-name-input"
+      className="name-input"
       value={value}
+      autoFocus
+      aria-label="Space name"
       onChange={(e) => setValue(e.target.value)}
-      onBlur={() => {
-        const trimmed = value.trim();
-        if (trimmed && trimmed !== space.name) onRename(trimmed);
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') onDone();
       }}
     />
   );
@@ -52,24 +56,12 @@ function SpaceCard({
   allSpaces: Space[];
   onRefresh: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [showLetter, setShowLetter] = useState(false);
   const [busy, setBusy] = useState(false);
   if (space.id === undefined) return null;
   const spaceId = space.id;
-
-  const rename = async (name: string) => {
-    await renameSpace(spaceId, name);
-    onRefresh();
-  };
-
-  const move = async (spaceUrlId: number, toSpaceId: number) => {
-    await moveSpaceUrl(spaceUrlId, toSpaceId);
-    onRefresh();
-  };
-
-  const toggleAlwaysOpen = async (spaceUrlId: number, checked: boolean) => {
-    await setSpaceUrlAlwaysOpen(spaceUrlId, checked);
-    onRefresh();
-  };
 
   const runAction = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -82,63 +74,85 @@ function SpaceCard({
   };
 
   return (
-    <div className="space-card">
-      <div className="space-header">
-        <SpaceNameInput space={space} onRename={rename} />
-        <span className="space-status">{statusLabel(space.status)}</span>
+    <section className="mrow">
+      <div className="row-line">
+        <button className={open ? 'chev open' : 'chev'} aria-expanded={open} aria-label={open ? 'Collapse' : 'Expand'} onClick={() => setOpen((v) => !v)}>
+          <Icon name="chevron" size={14} />
+        </button>
+        {renaming ? (
+          <SpaceNameInput
+            space={space}
+            onRename={async (name) => {
+              await renameSpace(spaceId, name);
+              onRefresh();
+            }}
+            onDone={() => setRenaming(false)}
+          />
+        ) : (
+          <button className="row-title" title={space.name} onClick={() => setOpen((v) => !v)}>
+            {space.name}
+          </button>
+        )}
+        {space.letter && <Keycap title={`Leader + ${space.letter.toUpperCase()} switches here`}>{space.letter.toUpperCase()}</Keycap>}
+        <span className="meta">{space.urls.length} {space.urls.length === 1 ? 'tab' : 'tabs'}</span>
+        <IconButton icon="shelve" label="Shelve: close these tabs and keep them for later" disabled={busy} onClick={() => runAction(() => shelveSpace(spaceId))} />
+        <IconButton icon="restore" label="Restore the shelved tabs" disabled={busy} onClick={() => runAction(() => restoreSpace(spaceId))} />
+        <Menu
+          items={[
+            { label: 'Rename', onSelect: () => setRenaming(true) },
+            { label: space.letter ? 'Change letter' : 'Set letter', onSelect: () => { setOpen(true); setShowLetter(true); } },
+            { label: 'Close tabs and save', onSelect: () => runAction(() => closeAndSaveSpace(spaceId)) },
+          ]}
+        />
       </div>
 
-      <SpaceLetterControl spaceId={spaceId} name={space.name} />
-
-      {space.urls.length === 0 ? (
-        <div className="ritual-empty">No tabs yet.</div>
-      ) : (
-        <ul className="tab-list">
-          {space.urls.map((u) => {
-            if (u.id === undefined) return null;
-            const spaceUrlId = u.id;
-            return (
-              <li key={spaceUrlId}>
-                <span className="tab-title" title={u.url}>
-                  {u.title || u.url}
-                </span>
-                <label className="always-open-toggle">
-                  <input
-                    type="checkbox"
-                    checked={u.alwaysOpen}
-                    onChange={(e) => toggleAlwaysOpen(spaceUrlId, e.target.checked)}
-                  />
-                  always open
-                </label>
-                <select value={spaceId} onChange={(e) => move(spaceUrlId, Number(e.target.value))}>
-                  {allSpaces.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </li>
-            );
-          })}
-        </ul>
+      {open && (
+        <div className="mrow-body">
+          {showLetter && <SpaceLetterControl spaceId={spaceId} name={space.name} />}
+          {space.urls.length === 0 ? (
+            <div className="empty">No tabs in this space yet.</div>
+          ) : (
+            <ul className="step-list">
+              {space.urls.map((u) => {
+                if (u.id === undefined) return null;
+                const spaceUrlId = u.id;
+                const others = allSpaces.filter((x) => x.id !== undefined && x.id !== spaceId);
+                return (
+                  <li key={spaceUrlId}>
+                    <SiteTile url={u.url} />
+                    <span className="step-title" title={`${u.title || u.url}\n${u.url}`}>
+                      {u.title || u.url}
+                    </span>
+                    {u.alwaysOpen && <span className="chip" title="Opens whenever this space is restored">always open</span>}
+                    <Menu
+                      label="Tab options"
+                      items={[
+                        {
+                          label: 'Always open',
+                          checked: u.alwaysOpen,
+                          onSelect: async () => {
+                            await setSpaceUrlAlwaysOpen(spaceUrlId, !u.alwaysOpen);
+                            onRefresh();
+                          },
+                        },
+                        ...(others.length > 0 ? [{ heading: 'Move to' } as const] : []),
+                        ...others.map((x) => ({
+                          label: x.name,
+                          onSelect: async () => {
+                            await moveSpaceUrl(spaceUrlId, x.id!);
+                            onRefresh();
+                          },
+                        })),
+                      ]}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
-
-      <div className="space-actions">
-        <button className="btn" disabled={busy} onClick={() => runAction(() => shelveSpace(spaceId))}>
-          Shelve
-        </button>
-        <button
-          className="btn btn-secondary"
-          disabled={busy}
-          onClick={() => runAction(() => closeAndSaveSpace(spaceId))}
-        >
-          Close and save
-        </button>
-        <button className="btn btn-secondary" disabled={busy} onClick={() => runAction(() => restoreSpace(spaceId))}>
-          Restore
-        </button>
-      </div>
-    </div>
+    </section>
   );
 }
 
@@ -156,38 +170,31 @@ function UnassignedSection({
     onRefresh();
   };
 
+  if (unassigned.length === 0) return null;
   return (
-    <section className="unassigned-section">
-      <h3>Unassigned</h3>
-      {unassigned.length === 0 ? (
-        <div className="ritual-empty">Nothing unassigned.</div>
-      ) : (
-        <ul className="tab-list">
-          {unassigned.map((c) => (
-            <li key={c.url}>
-              <span className="tab-title" title={c.url}>
-                {c.title || c.url}
-              </span>
-              {spaces.length > 0 && (
-                <select
-                  defaultValue=""
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    if (id) assign(c.url, c.title, id);
-                  }}
-                >
-                  <option value="">Assign to…</option>
-                  {spaces.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+    <section>
+      <h3 className="sec-title">
+        Unassigned <span className="count">{unassigned.length}</span>
+      </h3>
+      <ul className="step-list flush">
+        {unassigned.map((c) => (
+          <li key={c.url}>
+            <SiteTile url={c.url} />
+            <span className="step-title" title={`${c.title || c.url}\n${c.url}`}>
+              {c.title || c.url}
+            </span>
+            {spaces.length > 0 && (
+              <Menu
+                label="Add to a space"
+                items={[
+                  { heading: 'Add to' },
+                  ...spaces.map((s) => ({ label: s.name, onSelect: () => assign(c.url, c.title, s.id!) })),
+                ]}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -275,14 +282,16 @@ export function SpacesTab() {
     <div className="spaces-tab">
       {pending && <SwitchSuggestionBanner pending={pending} onRefresh={refresh} />}
 
-      <div className="spaces-toolbar">
-        <button className="btn" disabled={recomputing} onClick={recomputeNow}>
-          {recomputing ? 'Recomputing…' : 'Recompute now'}
-        </button>
+      <div className="toolbar">
+        <h3 className="sec-title flush">
+          Spaces <span className="count">{spaces.length}</span>
+        </h3>
+        <span className="grow" />
+        <IconButton icon="refresh" label={recomputing ? 'Recomputing…' : 'Recompute spaces now'} disabled={recomputing} onClick={recomputeNow} />
       </div>
 
       {spaces.length === 0 && (
-        <div className="ritual-empty">No spaces yet. Open a few tabs, then recompute.</div>
+        <div className="empty">No spaces yet. Open a few related tabs for a while, then press recompute.</div>
       )}
       {spaces.map((s) => (
         <SpaceCard key={s.id} space={s} allSpaces={spaces} onRefresh={refresh} />

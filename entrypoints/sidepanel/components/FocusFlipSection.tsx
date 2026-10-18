@@ -65,11 +65,10 @@ export function FocusFlipSection() {
   const secondsLeft = flip ? Math.max(0, Math.ceil((flip.returnAt - now) / 1000)) : 0;
 
   return (
-    <section className="settings focus-flip">
-      <h3>Focus Flip</h3>
+    <div className="settings-block focus-flip">
       <label className="settings-row checkbox-row">
         <input type="checkbox" checked={enabled} onChange={(e) => toggle(e.target.checked)} />
-        <span>Flip to my reference tab when I pause typing (off by default)</span>
+        <span>Flip to my reference tab when I pause typing</span>
       </label>
 
       {flip && enabled && (
@@ -82,9 +81,7 @@ export function FocusFlipSection() {
       )}
 
       {enabled && pairs.length === 0 && (
-        <div className="ritual-empty">
-          No pairs learned yet. Alternate between a writing tab and a reference tab a few times, typing in the writing tab.
-        </div>
+        <div className="empty">No pairs yet. Switch between a writing tab and a reference tab a few times while typing.</div>
       )}
       {pairs.length > 0 && (
         <ul className="flip-pairs">
@@ -103,6 +100,6 @@ export function FocusFlipSection() {
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

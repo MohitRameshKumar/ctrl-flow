@@ -5,6 +5,7 @@ import {
   getMacros,
   moveMacroStep,
   setMacroReuseOpenTabs,
+  setMacroSlot,
   removeMacroStep,
   renameMacro,
   setMacroStepEnabled,
@@ -22,7 +23,15 @@ import { explainStatus } from '@/lib/macro-learning';
 import { EMPTY_STATS } from '@/lib/macro-learning';
 import { getDemoMode } from '@/lib/settings';
 import type { Macro, MacroStep } from '@/lib/types';
+import { MACRO_RECORD_WINDOW_MS } from '@/lib/constants';
+import { suggestLetter } from '@/lib/hotkeys';
+import { setMacroLetter, takenLetters } from '@/lib/leader';
+import { nameOpenMacro, refineSegment } from '@/lib/macro-repeat';
+import { notNowSuggestion } from '@/lib/macros';
+import { savedMacros, visibleSuggestions } from '@/lib/macro-suggestions';
 import { RunPanel, useRunState } from './RunPanel';
+import { Icon, IconButton, Keycap, Menu, SiteTile } from './ui';
+import { openShortcutSettings, useCommandShortcut } from './ShortcutLabel';
 import { SpaceLetterControl } from './SpaceLetterControl';
 import { SuggestionCard } from './SuggestionCard';
 
@@ -84,23 +93,31 @@ function macroSummary(macro: Macro): string {
   return parts.join(' · ');
 }
 
-function MacroNameInput({ macro, onRename }: { macro: Macro; onRename: (name: string) => void }) {
+function MacroNameInput({ macro, onRename, onDone }: { macro: Macro; onRename: (name: string) => void; onDone: () => void }) {
   const [value, setValue] = useState(macro.name);
   useEffect(() => setValue(macro.name), [macro.name]);
 
+  const commit = () => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== macro.name) onRename(trimmed);
+    onDone();
+  };
+
   return (
     <input
-      className="space-name-input"
+      className="name-input"
       value={value}
+      autoFocus
+      aria-label="Macro name"
       onChange={(e) => setValue(e.target.value)}
-      onBlur={() => {
-        const trimmed = value.trim();
-        if (trimmed && trimmed !== macro.name) onRename(trimmed);
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') onDone();
       }}
     />
   );
 }
-
 
 /**
  * Builds the step kinds detection never produces.
@@ -224,7 +241,43 @@ function AddStepControls({ macroId, urls, onAdded }: {
   );
 }
 
-function MacroCard({
+function SlotControl({ macro, onRefresh }: { macro: Macro; onRefresh: () => void }) {
+  const slot = macro.slot ?? 0;
+  const shortcut = useCommandShortcut(`run-macro-slot-${slot || 1}`);
+  return (
+    <div className="inline-field">
+      <label>
+        <span>Direct shortcut</span>
+        <select
+          value={slot}
+          aria-label="Direct shortcut slot"
+          onChange={async (e) => {
+            const n = Number(e.target.value);
+            if (macro.id !== undefined) await setMacroSlot(macro.id, n === 0 ? null : n);
+            onRefresh();
+          }}
+        >
+          <option value={0}>None</option>
+          {[1, 2, 3, 4].map((n) => (
+            <option key={n} value={n}>
+              Slot {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      {slot > 0 &&
+        (shortcut.set ? (
+          <Keycap title={`Run macro slot ${slot}`}>{shortcut.text}</Keycap>
+        ) : (
+          <button className="btn-link" onClick={openShortcutSettings}>
+            Bind a key in Chrome <Icon name="external" size={12} />
+          </button>
+        ))}
+    </div>
+  );
+}
+
+function MacroRow({
   macro,
   highlighted,
   onRefresh,
@@ -233,6 +286,9 @@ function MacroCard({
   highlighted: boolean;
   onRefresh: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<'letter' | 'slot' | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>(() =>
@@ -241,6 +297,7 @@ function MacroCard({
 
   if (macro.id === undefined) return null;
   const macroId = macro.id;
+  const openSteps = macro.steps.filter((s) => s.kind === 'open_url' && s.enabled).length;
 
   // Pause / Stop / Skip live in the RunPanel, which talks to the executor over the session-storage
   // command channel — that works whether the run was started here, from a notification, or by an
@@ -254,6 +311,7 @@ function MacroCard({
       onRefresh();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
+      setOpen(true);
     } finally {
       setBusy(false);
     }
@@ -261,133 +319,106 @@ function MacroCard({
 
   const failed = macro.lastRunResult?.outcomes.some((o) => o.status === 'failed') ?? false;
   const lastRun = status ?? (macro.lastRunResult ? summarizeRun(macro, macro.lastRunResult) : null);
+  const reuse = macro.reuseOpenTabs === true;
 
   return (
-    <section className={highlighted ? 'space-card macro-row highlight' : 'space-card macro-row'}>
-      <div className="space-header">
-        <MacroNameInput
-          macro={macro}
-          onRename={async (name) => {
-            await renameMacro(macroId, name);
-            onRefresh();
-          }}
+    <section className={highlighted ? 'mrow highlight' : 'mrow'}>
+      <div className="row-line">
+        <button className={open ? 'chev open' : 'chev'} aria-expanded={open} aria-label={open ? 'Hide steps' : 'Show steps'} onClick={() => setOpen((v) => !v)}>
+          <Icon name="chevron" size={14} />
+        </button>
+        {renaming ? (
+          <MacroNameInput
+            macro={macro}
+            onRename={async (name) => {
+              await renameMacro(macroId, name);
+              onRefresh();
+            }}
+            onDone={() => setRenaming(false)}
+          />
+        ) : (
+          <button className="row-title" title={macro.name} onClick={() => setOpen((v) => !v)}>
+            {macro.name}
+          </button>
+        )}
+        {macro.letter && <Keycap title={`Leader + ${macro.letter.toUpperCase()} runs this`}>{macro.letter.toUpperCase()}</Keycap>}
+        {macro.slot && <Keycap title={`Direct shortcut slot ${macro.slot}`}>{`#${macro.slot}`}</Keycap>}
+        <span className="meta" title={macroSummary(macro)}>
+          {openSteps} {openSteps === 1 ? 'step' : 'steps'}
+        </span>
+        <IconButton icon="play" label={busy ? 'Running…' : 'Run'} tone="accent" disabled={busy} onClick={run} />
+        <Menu
+          items={[
+            { label: 'Rename', onSelect: () => setRenaming(true) },
+            { label: macro.letter ? 'Change letter' : 'Set letter', onSelect: () => { setOpen(true); setPanel('letter'); } },
+            { label: 'Direct shortcut slot', onSelect: () => { setOpen(true); setPanel('slot'); } },
+            { heading: 'If a page is already open' },
+            { label: 'Open new tab', checked: !reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, false); onRefresh(); } },
+            { label: 'Switch to it', checked: reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, true); onRefresh(); } },
+            { heading: '' },
+            { label: 'Delete', danger: true, onSelect: async () => { await deleteMacro(macroId); onRefresh(); } },
+          ]}
         />
-        <span className="space-status">{detectorLabel(macro.detector)}</span>
       </div>
 
-      <div className="macro-run-status">{explainStatus(macro.status, macro.stats ?? EMPTY_STATS)}</div>
+      {lastRun && !open && <div className={failed ? 'row-sub error' : 'row-sub'} title={lastRun}>{lastRun}</div>}
 
-      <SpaceLetterControl kind="macro" spaceId={macroId} name={macro.name} />
+      {open && (
+        <div className="mrow-body">
+          {panel === 'letter' && <SpaceLetterControl kind="macro" spaceId={macroId} name={macro.name} />}
+          {panel === 'slot' && <SlotControl macro={macro} onRefresh={onRefresh} />}
 
-      <label className="settings-row">
-        <span>If a page is already open</span>
-        <select
-          value={macro.reuseOpenTabs ? 'switch' : 'new'}
-          aria-label="If a page is already open"
-          onChange={async (e) => {
-            await setMacroReuseOpenTabs(macroId, e.target.value === 'switch');
-            onRefresh();
-          }}
-        >
-          <option value="new">Open new tab</option>
-          <option value="switch">Switch to it</option>
-        </select>
-      </label>
+          <ul className="step-list">
+            {macro.steps.map((step, index) => (
+              <li key={step.key}>
+                <input
+                  type="checkbox"
+                  checked={step.enabled}
+                  aria-label={`Include step: ${stepLabel(step)}`}
+                  onChange={async (e) => {
+                    await setMacroStepEnabled(macroId, step.key, e.target.checked);
+                    onRefresh();
+                  }}
+                />
+                {step.kind === 'open_url' ? <SiteTile url={step.url} /> : <span className="tile plain" />}
+                <span className={isExperimental(step) ? 'step-title dim' : 'step-title'} title={stepLabel(step)}>
+                  {stepLabel(step)}
+                </span>
+                {isExperimental(step) && <span className="chip">experimental</span>}
+                <IconButton icon="up" label="Move up" disabled={index === 0} onClick={async () => { await moveMacroStep(macroId, step.key, -1); onRefresh(); }} />
+                <IconButton icon="down" label="Move down" disabled={index === macro.steps.length - 1} onClick={async () => { await moveMacroStep(macroId, step.key, 1); onRefresh(); }} />
+                <IconButton icon="close" label="Remove step" onClick={async () => { await removeMacroStep(macroId, step.key); onRefresh(); }} />
+              </li>
+            ))}
+          </ul>
 
-      <ul className="tab-list">
-        {macro.steps.map((step, index) => (
-          <li key={step.key}>
-            <label className="always-open-toggle">
-              <input
-                type="checkbox"
-                checked={step.enabled}
-                onChange={async (e) => {
-                  await setMacroStepEnabled(macroId, step.key, e.target.checked);
-                  onRefresh();
-                }}
-              />
-            </label>
-            <span className={isExperimental(step) ? 'tab-title macro-step-click' : 'tab-title'}>
-              {stepLabel(step)}
-            </span>
-            {isExperimental(step) && <span className="macro-chip">experimental</span>}
-            <button
-              className="btn btn-link macro-step-move"
-              disabled={index === 0}
-              title="Move up"
-              onClick={async () => {
-                await moveMacroStep(macroId, step.key, -1);
-                onRefresh();
-              }}
-            >
-              ↑
-            </button>
-            <button
-              className="btn btn-link macro-step-move"
-              disabled={index === macro.steps.length - 1}
-              title="Move down"
-              onClick={async () => {
-                await moveMacroStep(macroId, step.key, 1);
-                onRefresh();
-              }}
-            >
-              ↓
-            </button>
-            <button
-              className="btn btn-remove"
-              onClick={async () => {
-                await removeMacroStep(macroId, step.key);
-                onRefresh();
-              }}
-            >
-              Remove
-            </button>
-          </li>
-        ))}
-      </ul>
+          {(macro.params ?? []).length > 0 && (
+            <div className="params">
+              {(macro.params ?? []).map((param) => (
+                <label key={param.name} className="inline-field">
+                  <span>{param.name}</span>
+                  <input
+                    value={paramValues[param.name] ?? ''}
+                    onChange={(e) => setParamValues((v) => ({ ...v, [param.name]: e.target.value }))}
+                    placeholder={param.lastValue || 'Enter a value'}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
 
-      {(macro.params ?? []).length > 0 && (
-        <div className="macro-params">
-          {(macro.params ?? []).map((param) => (
-            <label key={param.name} className="add-step-field">
-              <span>{param.name}</span>
-              <input
-                value={paramValues[param.name] ?? ''}
-                onChange={(e) =>
-                  setParamValues((v) => ({ ...v, [param.name]: e.target.value }))
-                }
-                placeholder={param.lastValue}
-              />
-            </label>
-          ))}
-          <p className="settings-hint">
-            Recently: {(macro.params ?? []).flatMap((p) => p.examples).slice(0, 4).join(', ')}
-          </p>
+          <AddStepControls
+            macroId={macroId}
+            urls={[...new Set(macro.steps.filter((s) => s.kind === 'open_url').map((s) => s.url))]}
+            onAdded={onRefresh}
+          />
+
+          <div className="row-sub" title={explainStatus(macro.status, macro.stats ?? EMPTY_STATS)}>
+            {explainStatus(macro.status, macro.stats ?? EMPTY_STATS)} · {detectorLabel(macro.detector)}
+          </div>
+          {lastRun && <div className={failed ? 'row-sub error' : 'row-sub'}>{lastRun}</div>}
         </div>
       )}
-
-      <AddStepControls
-        macroId={macroId}
-        urls={[...new Set(macro.steps.filter((s) => s.kind === 'open_url').map((s) => s.url))]}
-        onAdded={onRefresh}
-      />
-
-      <div className="space-actions">
-        <button className="btn btn-accept" disabled={busy} onClick={run}>
-          {busy ? 'Running…' : 'Run'}
-        </button>
-        <button
-          className="btn btn-secondary"
-          onClick={async () => {
-            await deleteMacro(macroId);
-            onRefresh();
-          }}
-        >
-          Delete
-        </button>
-      </div>
-
-      {lastRun && <div className={failed ? 'macro-run-status error' : 'macro-run-status'}>{lastRun}</div>}
     </section>
   );
 }
@@ -399,7 +430,7 @@ export interface MacrosTabProps {
 
 export function MacrosTab({ paletteNonce }: MacrosTabProps) {
   const [macros, setMacros] = useState<Macro[]>([]);
-  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const [offerLetter, setOfferLetter] = useState<{ macroId: number; name: string; letter: string } | null>(null);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -442,11 +473,9 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
     [macros],
   );
 
-  const suggested = macros.filter((m) => m.status === 'suggested' && !dismissed.has(m.id ?? -1));
-  const saved = useMemo(
-    () => macros.filter((m) => m.status === 'accepted' || m.status === 'auto'),
-    [macros],
-  );
+  // At most two suggestions, snoozed / merged / best-first; saved macros are listed above them.
+  const suggested = useMemo(() => visibleSuggestions(macros, Date.now()), [macros]);
+  const saved = useMemo(() => savedMacros(macros), [macros]);
 
   const filtered = useMemo(() => {
     const q = splitQuery(query).words.join(' ').toLowerCase();
@@ -492,6 +521,13 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
     }
   };
 
+  /** After a save: offer the first free letter of the macro's name, one click to confirm. */
+  const offerLetterFor = async (macro: Macro) => {
+    if (macro.id === undefined || macro.letter) return;
+    const letter = suggestLetter(macro.name, await takenLetters());
+    setOfferLetter(letter ? { macroId: macro.id, name: macro.name, letter } : null);
+  };
+
   const scanNow = async () => {
     setBusy(true);
     setNotice(null);
@@ -507,12 +543,15 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
     setBusy(true);
     setNotice(null);
     try {
-      const macro = await recordMacroFromRecentActivity();
-      setNotice(
-        macro
-          ? `Saved "${macro.name}" from the last 30 seconds.`
-          : 'Nothing to record — visit at least two pages first.',
-      );
+      const macro = await recordMacroFromRecentActivity({
+        fromTs: Date.now() - MACRO_RECORD_WINDOW_MS,
+        toTs: Date.now(),
+        refine: refineSegment,
+        reuseExisting: true,
+        nameFor: (c, taken) => nameOpenMacro(c.steps.filter((s) => s.kind === 'open_url').map((s) => s.url), taken),
+      });
+      setNotice(macro ? null : 'Nothing to keep: open at least two pages first.');
+      if (macro) await offerLetterFor(macro);
       await refresh();
     } finally {
       setBusy(false);
@@ -521,13 +560,19 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
 
   if (loading) return <div className="loading">Loading macros…</div>;
 
+  const recent = [...saved]
+    .filter((m) => m.lastRunAt !== undefined && m.lastRunResult)
+    .sort((a, b) => (b.lastRunAt ?? 0) - (a.lastRunAt ?? 0))
+    .slice(0, 3);
+
   return (
-    <>
-      <div className="macro-palette">
+    <div className="macros-tab">
+      <div className="toolbar">
         <input
           ref={inputRef}
-          className="macro-palette-input"
+          className="search-input"
           placeholder="Run a macro…"
+          aria-label="Run a macro"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -535,28 +580,37 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
           }}
           onKeyDown={onPaletteKeyDown}
         />
-        {shortcut ? (
-          <span className="macro-palette-hint">{shortcut}</span>
-        ) : (
-          <button
-            className="btn btn-link"
-            onClick={() => chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })}
-          >
-            Set a shortcut
-          </button>
-        )}
+        <IconButton icon="refresh" label="Scan for routines now" disabled={busy} onClick={scanNow} />
+        <IconButton icon="record" label="Keep the last 30 seconds as a macro" disabled={busy} onClick={recordNow} />
       </div>
-
-      <div className="spaces-toolbar">
-        <button className="btn btn-secondary" disabled={busy} onClick={scanNow}>
-          {busy ? 'Working…' : 'Scan now'}
+      {!shortcut && (
+        <button className="btn-link hint-link" onClick={openShortcutSettings}>
+          Set a palette shortcut <Icon name="external" size={12} />
         </button>
-        <button className="btn btn-secondary" disabled={busy} onClick={recordNow}>
-          Record last 30s
-        </button>
-      </div>
+      )}
 
       {notice && <div className="notice">{notice}</div>}
+
+      {offerLetter && (
+        <div className="notice action">
+          <span>
+            Saved “{offerLetter.name}”. Run it with leader + <Keycap>{offerLetter.letter.toUpperCase()}</Keycap>?
+          </span>
+          <button
+            className="btn primary sm"
+            onClick={async () => {
+              await setMacroLetter(offerLetter.macroId, offerLetter.letter);
+              setOfferLetter(null);
+              await refresh();
+            }}
+          >
+            Assign {offerLetter.letter.toUpperCase()}
+          </button>
+          <button className="btn sm" onClick={() => setOfferLetter(null)}>
+            Skip
+          </button>
+        </div>
+      )}
 
       {/* A run started from the palette, a notification or an auto-trigger may target a macro
           that is filtered out of view, or not saved at all. Its controls must stay reachable,
@@ -565,49 +619,64 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
         <RunPanel state={runState} abandoned={abandoned} stepsByMacroId={stepsByMacroId} />
       )}
 
-      {suggested.map((macro) => (
-        <SuggestionCard
-          key={macro.macroKey}
-          title={`Save "${macro.name}" as a macro?`}
-          description={macroSummary(macro)}
-          acceptLabel="Save macro"
-          onAccept={async () => {
-            if (macro.id !== undefined) await updateMacroStatus(macro.id, 'accepted');
-            await refresh();
-          }}
-          onNotNow={() => setDismissed((d) => new Set(d).add(macro.id ?? -1))}
-          onNever={async () => {
-            if (macro.id !== undefined) await updateMacroStatus(macro.id, 'never');
-            await refresh();
-          }}
-        />
-      ))}
-
-      {filtered.length === 0 && suggested.length === 0 && (
-        <div className="ritual-empty">
-          {query
-            ? 'No macros match that.'
-            : 'No macros yet. Repeat a routine a few times and Cadence will spot it — or press "Record last 30s" after doing one.'}
+      <h3 className="sec-title">
+        Saved <span className="count">{saved.length}</span>
+      </h3>
+      {filtered.length === 0 && (
+        <div className="empty">
+          {query ? 'No saved macros match that.' : 'No saved macros yet. Do a routine, then press the leader key and K to keep it.'}
         </div>
       )}
-
       {filtered.map((macro, index) =>
         runState && macro.id === runState.macroId ? (
-          <RunPanel
-            key={macro.macroKey}
-            state={runState}
-            abandoned={abandoned}
-            stepsByMacroId={stepsByMacroId}
-          />
+          <RunPanel key={macro.macroKey} state={runState} abandoned={abandoned} stepsByMacroId={stepsByMacroId} />
         ) : (
-          <MacroCard
-            key={macro.macroKey}
-            macro={macro}
-            highlighted={query.length > 0 && index === highlight}
-            onRefresh={refresh}
-          />
+          <MacroRow key={macro.macroKey} macro={macro} highlighted={query.length > 0 && index === highlight} onRefresh={refresh} />
         ),
       )}
-    </>
+
+      {suggested.length > 0 && (
+        <>
+          <h3 className="sec-title">Suggestions</h3>
+          {suggested.map((macro) => (
+            <SuggestionCard
+              key={macro.macroKey}
+              title={macro.name}
+              description={macroSummary(macro)}
+              acceptLabel="Save"
+              onAccept={async () => {
+                if (macro.id !== undefined) {
+                  await updateMacroStatus(macro.id, 'accepted');
+                  await offerLetterFor({ ...macro, status: 'accepted' });
+                }
+                await refresh();
+              }}
+              onNotNow={async () => {
+                if (macro.id !== undefined) await notNowSuggestion(macro.id);
+                await refresh();
+              }}
+              onNever={async () => {
+                if (macro.id !== undefined) await updateMacroStatus(macro.id, 'never');
+                await refresh();
+              }}
+            />
+          ))}
+        </>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <h3 className="sec-title">Recent runs</h3>
+          <ul className="log">
+            {recent.map((m) => (
+              <li key={m.macroKey} title={`${m.name}: ${summarizeRun(m, m.lastRunResult!)}`}>
+                <span className="log-name">{m.name}</span>
+                <span className="meta">{summarizeRun(m, m.lastRunResult!)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }

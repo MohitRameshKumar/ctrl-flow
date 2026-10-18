@@ -57,9 +57,7 @@ export function SettingsPanel({
   const openDebugPage = () => window.open(chrome.runtime.getURL('/debug.html'));
 
   return (
-    <section className="settings">
-      <h3>General</h3>
-
+    <div className="settings-block">
       <label className="settings-row">
         <span>Calendar source</span>
         <select
@@ -123,9 +121,9 @@ export function SettingsPanel({
 
       <LastAiRequestViewer />
 
-      <button className="btn btn-link" onClick={openDebugPage}>
+      <button className="btn-link" onClick={openDebugPage}>
         Open debug page
       </button>
-    </section>
+    </div>
   );
 }
