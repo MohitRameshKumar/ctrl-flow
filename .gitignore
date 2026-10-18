@@ -13,3 +13,7 @@ extension-key.pem
 # Playwright: traces and screenshots from a failed e2e run, plus its HTML report
 test-results
 playwright-report
+
+# electron-vite / electron-builder output
+out/
+release/

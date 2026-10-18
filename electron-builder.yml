@@ -1,0 +1,72 @@
+appId: dev.cadence.desktop
+productName: Cadence
+copyright: Cadence
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the built bundles and the icons ship. `lib/` and `entrypoints/` are already compiled into
+# out/renderer, so shipping the sources again would just bloat the installer.
+files:
+  - out/**/*
+  - package.json
+  # The injected collector is read as a string at runtime, not imported, so it must ship.
+  - out/injected/collector.js
+
+asar: true
+
+win:
+  # Fixed asset names so site/index.html can link to them without knowing the version.
+  artifactName: Cadence-Setup.${ext}
+  target:
+    - target: nsis
+      arch: [x64]
+  # `appId` above is what makes Windows toasts work at all; without it they are silently dropped.
+  icon: public/icon/512.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # The Start Menu shortcut is also what Windows uses to attribute notifications to the app.
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cadence
+
+mac:
+  artifactName: Cadence-${arch}.${ext}
+  category: public.app-category.productivity
+  icon: public/icon/512.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # UNSIGNED BUILD — deliberate, see below.
+  #
+  # `identity: null` makes electron-builder ad-hoc sign (`codesign --sign -`). On Apple Silicon this
+  # is mandatory, not cosmetic: arm64 macOS refuses to execute a Mach-O with no signature at all, so
+  # a truly unsigned build does not launch. Verify after building with:
+  #   codesign -dv --verbose=4 release/mac-arm64/Cadence.app
+  # If that reports "code object is not signed at all", re-sign manually:
+  #   codesign --force --deep --sign - release/mac-arm64/Cadence.app
+  #
+  # Ad-hoc signing still leaves Gatekeeper: a downloaded .dmg carries com.apple.quarantine, and
+  # ad-hoc + quarantine on Apple Silicon shows the misleading "Cadence is damaged" dialog. The
+  # download page documents the `xattr -dr com.apple.quarantine` fix. Real notarization needs an
+  # Apple Developer account; when one exists, drop `identity: null` and add `notarize: true`.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  title: Cadence
+  contents:
+    - x: 140
+      y: 180
+      type: file
+    - x: 400
+      y: 180
+      type: link
+      path: /Applications
+
+publish: null

@@ -1,6 +1,27 @@
-# WXT + React
+# Cadence
 
-This template should help get you started developing with React in WXT.
+Cadence notices the routines you repeat in your browser and gives you one key that runs them.
+
+It ships two ways from this repo:
+
+- **Desktop app** (`desktop/`) — the downloadable Windows/macOS build. It launches your installed
+  Chrome with a debugging port and drives it over the Chrome DevTools Protocol, so there is nothing
+  to install in the browser. See [`desktop/README.md`](./desktop/README.md) and
+  [`MANUAL_TEST_DESKTOP.md`](./MANUAL_TEST_DESKTOP.md).
+- **Chrome extension** (`entrypoints/`) — the original WXT + React MV3 build, unchanged.
+  See [`MANUAL_TEST.md`](./MANUAL_TEST.md).
+
+Both share every module in `lib/` and every side-panel component: the desktop app provides a
+`chrome.*` shim rather than forking the logic.
+
+```bash
+npm run build           # the extension   -> .output/chrome-mv3
+npm run build:desktop   # the desktop app -> out/
+npm run dist:win        # Windows installer -> release/
+npm run dist:mac        # macOS dmg         -> release/
+```
+
+A download page for the installers lives in [`site/`](./site/index.html).
 
 ## Testing
 

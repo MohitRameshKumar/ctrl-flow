@@ -1,0 +1,66 @@
+name: Desktop build
+
+# Builds the downloadable installers for both OSes.
+#
+# The macOS job is not optional convenience: the dev machine for this project is Windows, and
+# `codesign` does not exist there — so a macOS build (even an *ad-hoc signed* one, which Apple
+# Silicon requires in order to launch at all) can only be produced on a real macOS runner.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: |
+          npx tsc --noEmit
+          npx tsc --noEmit -p desktop/tsconfig.json
+      - run: npx vitest run
+      - name: Build installer
+        run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadence-windows
+          path: release/*.exe
+
+  macos:
+    # Apple Silicon runner, so the arm64 slice is built natively.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build dmg (ad-hoc signed)
+        run: npm run dist:mac
+
+      # Apple Silicon refuses to execute a Mach-O with no signature at all, so a missing ad-hoc
+      # signature means the app simply will not open on a judge's Mac. Fail the build here rather
+      # than discovering it live.
+      - name: Verify the app is at least ad-hoc signed
+        run: |
+          APP=$(find release -maxdepth 2 -name 'Cadence.app' -print -quit)
+          echo "checking $APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/sig.txt
+          if grep -q "code object is not signed at all" /tmp/sig.txt; then
+            echo "::error::unsigned binary — it will not launch on Apple Silicon"
+            exit 1
+          fi
+          codesign --verify --deep --strict "$APP" && echo "signature verifies"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cadence-macos
+          path: release/*.dmg

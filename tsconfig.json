@@ -4,5 +4,11 @@
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx"
   },
-  "exclude": ["node_modules", ".output", "proxy"]
+  "exclude": [
+    "node_modules",
+    ".output",
+    "proxy",
+    "desktop",
+    "electron.vite.config.ts"
+  ]
 }
