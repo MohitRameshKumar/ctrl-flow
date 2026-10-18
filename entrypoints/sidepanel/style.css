@@ -118,10 +118,13 @@ h4 {
   background: var(--bg);
 }
 
-.app-title {
-  font-size: var(--t-lg);
-  font-weight: 700;
-  letter-spacing: -0.01em;
+/* The logo is a knockout mask painted in the text color: light ink on the dark panel, dark ink on light. */
+.app-logo {
+  height: 26px;
+  aspect-ratio: 611 / 289;
+  background-color: var(--ink);
+  -webkit-mask: image-set(url('/brand/logo-mono@2x.png') 2x, url('/brand/logo-mono@3x.png') 3x) center / contain no-repeat;
+  mask: image-set(url('/brand/logo-mono@2x.png') 2x, url('/brand/logo-mono@3x.png') 3x) center / contain no-repeat;
 }
 
 .app-header-right {
