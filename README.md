@@ -1,6 +1,6 @@
 # ctrl-flow
 
-Cadence notices the routines you repeat in your browser and gives you one key that runs them.
+ctrl-flow notices the routines you repeat in your browser and gives you one key that runs them.
 
 It ships two ways from this repo:
 
