@@ -25,7 +25,8 @@ import { getDemoMode } from '@/lib/settings';
 import type { Macro, MacroStep } from '@/lib/types';
 import { MACRO_RECORD_WINDOW_MS } from '@/lib/constants';
 import { suggestLetter } from '@/lib/hotkeys';
-import { setMacroLetter, takenLetters } from '@/lib/leader';
+import { getMenu, setMacroLetter, takenLetters } from '@/lib/leader';
+import { FIND_PDF_SUGGESTION_TEXT, commandSteps } from '@/lib/find-pdf-command';
 import { nameOpenMacro, refineSegment } from '@/lib/macro-repeat';
 import { notNowSuggestion } from '@/lib/macros';
 import { savedMacros, visibleSuggestions } from '@/lib/macro-suggestions';
@@ -281,10 +282,13 @@ function MacroRow({
   macro,
   highlighted,
   onRefresh,
+  commandLetter,
 }: {
   macro: Macro;
   highlighted: boolean;
   onRefresh: () => void;
+  /** The leader letter a built-in command (Find PDF) runs on. */
+  commandLetter?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<'letter' | 'slot' | null>(null);
@@ -297,7 +301,9 @@ function MacroRow({
 
   if (macro.id === undefined) return null;
   const macroId = macro.id;
-  const openSteps = macro.steps.filter((s) => s.kind === 'open_url' && s.enabled).length;
+  const command = macro.command;
+  const cmdSteps = command ? commandSteps(command) : [];
+  const openSteps = command ? cmdSteps.length : macro.steps.filter((s) => s.kind === 'open_url' && s.enabled).length;
 
   // Pause / Stop / Skip live in the RunPanel, which talks to the executor over the session-storage
   // command channel — that works whether the run was started here, from a notification, or by an
@@ -341,6 +347,7 @@ function MacroRow({
             {macro.name}
           </button>
         )}
+        {command && commandLetter && <Keycap title={`Leader + ${commandLetter.toUpperCase()} runs this on your selected text`}>{commandLetter.toUpperCase()}</Keycap>}
         {macro.letter && <Keycap title={`Leader + ${macro.letter.toUpperCase()} runs this`}>{macro.letter.toUpperCase()}</Keycap>}
         {macro.slot && <Keycap title={`Direct shortcut slot ${macro.slot}`}>{`#${macro.slot}`}</Keycap>}
         <span className="meta" title={macroSummary(macro)}>
@@ -352,9 +359,13 @@ function MacroRow({
             { label: 'Rename', onSelect: () => setRenaming(true) },
             { label: macro.letter ? 'Change letter' : 'Set letter', onSelect: () => { setOpen(true); setPanel('letter'); } },
             { label: 'Direct shortcut slot', onSelect: () => { setOpen(true); setPanel('slot'); } },
-            { heading: 'If a page is already open' },
-            { label: 'Open new tab', checked: !reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, false); onRefresh(); } },
-            { label: 'Switch to it', checked: reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, true); onRefresh(); } },
+            ...(command
+              ? []
+              : [
+                  { heading: 'If a page is already open' } as const,
+                  { label: 'Open new tab', checked: !reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, false); onRefresh(); } },
+                  { label: 'Switch to it', checked: reuse, onSelect: async () => { await setMacroReuseOpenTabs(macroId, true); onRefresh(); } },
+                ]),
             { heading: '' },
             { label: 'Delete', danger: true, onSelect: async () => { await deleteMacro(macroId); onRefresh(); } },
           ]}
@@ -367,6 +378,19 @@ function MacroRow({
         <div className="mrow-body">
           {panel === 'letter' && <SpaceLetterControl kind="macro" spaceId={macroId} name={macro.name} />}
           {panel === 'slot' && <SlotControl macro={macro} onRefresh={onRefresh} />}
+
+          {command && (
+            <ul className="step-list">
+              {cmdSteps.map((label) => (
+                <li key={label}>
+                  <span className="tile plain" />
+                  <span className="step-title" title={label}>
+                    {label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
 
           <ul className="step-list">
             {macro.steps.map((step, index) => (
@@ -407,11 +431,11 @@ function MacroRow({
             </div>
           )}
 
-          <AddStepControls
+          {!command && <AddStepControls
             macroId={macroId}
             urls={[...new Set(macro.steps.filter((s) => s.kind === 'open_url').map((s) => s.url))]}
             onAdded={onRefresh}
-          />
+          />}
 
           <div className="row-sub" title={explainStatus(macro.status, macro.stats ?? EMPTY_STATS)}>
             {explainStatus(macro.status, macro.stats ?? EMPTY_STATS)} · {detectorLabel(macro.detector)}
@@ -430,6 +454,7 @@ export interface MacrosTabProps {
 
 export function MacrosTab({ paletteNonce }: MacrosTabProps) {
   const [macros, setMacros] = useState<Macro[]>([]);
+  const [commandLetter, setCommandLetter] = useState<string | undefined>(undefined);
   const [offerLetter, setOfferLetter] = useState<{ macroId: number; name: string; letter: string } | null>(null);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
@@ -441,6 +466,7 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
 
   const refresh = useCallback(async () => {
     setMacros(await getMacros());
+    setCommandLetter((await getMenu()).find((i) => i.id === 'find-pdf')?.letter);
     setLoading(false);
   }, []);
 
@@ -523,7 +549,7 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
 
   /** After a save: offer the first free letter of the macro's name, one click to confirm. */
   const offerLetterFor = async (macro: Macro) => {
-    if (macro.id === undefined || macro.letter) return;
+    if (macro.id === undefined || macro.letter || macro.command) return;
     const letter = suggestLetter(macro.name, await takenLetters());
     setOfferLetter(letter ? { macroId: macro.id, name: macro.name, letter } : null);
   };
@@ -631,7 +657,7 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
         runState && macro.id === runState.macroId ? (
           <RunPanel key={macro.macroKey} state={runState} abandoned={abandoned} stepsByMacroId={stepsByMacroId} />
         ) : (
-          <MacroRow key={macro.macroKey} macro={macro} highlighted={query.length > 0 && index === highlight} onRefresh={refresh} />
+          <MacroRow key={macro.macroKey} macro={macro} highlighted={query.length > 0 && index === highlight} onRefresh={refresh} commandLetter={commandLetter} />
         ),
       )}
 
@@ -642,8 +668,8 @@ export function MacrosTab({ paletteNonce }: MacrosTabProps) {
             <SuggestionCard
               key={macro.macroKey}
               title={macro.name}
-              description={macroSummary(macro)}
-              acceptLabel="Save"
+              description={macro.command ? FIND_PDF_SUGGESTION_TEXT : macroSummary(macro)}
+              acceptLabel={macro.command && commandLetter ? `Save on ${commandLetter.toUpperCase()}` : 'Save'}
               onAccept={async () => {
                 if (macro.id !== undefined) {
                   await updateMacroStatus(macro.id, 'accepted');

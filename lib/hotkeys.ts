@@ -8,6 +8,8 @@
 export interface LeaderContext {
   tabId?: number;
   windowId?: number;
+  /** The page's selected text, captured when the pie opened (Find PDF only; never stored). */
+  selection?: string;
 }
 
 export interface LeaderRegistration {
@@ -40,6 +42,8 @@ export interface MenuItem {
   /** Short slice label and hover description for the pie menu. */
   short?: string;
   description?: string;
+  /** Toggle items (Focus Flip) only: whether the thing is currently on. */
+  on?: boolean;
 }
 
 export type LetterCheck = { ok: true; letter: string } | { ok: false; reason: string };

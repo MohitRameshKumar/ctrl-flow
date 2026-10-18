@@ -28,7 +28,8 @@ const MARK_START_KEY = 'macroMarkStart';
 const CONSUMED_KEY = 'macroSegmentConsumedAt';
 const PENDING_REPEAT_KEY = 'macroRepeatPending';
 const PENDING_REPEAT_MAX_AGE_MS = 2 * 60 * 1000;
-export const LEADER_NOTIFICATION_PREFIX = 'cadence-leader:';
+import { LEADER_NOTIFICATION_PREFIX } from './notification-ids';
+export { LEADER_NOTIFICATION_PREFIX };
 const REPEAT_NOTIFICATION_ID = `${LEADER_NOTIFICATION_PREFIX}repeat`;
 /** A forgotten mark (M pressed once, never again) expires rather than swallowing hours of history. */
 const MARK_MAX_AGE_MS = 10 * 60 * 1000;

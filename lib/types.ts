@@ -6,6 +6,10 @@ export type EventKind =
   | 'click'
   | 'field_changed'
   | 'typing_burst'
+  /** A copy happened. No clipboard content is ever stored. */
+  | 'copy'
+  /** A download started: only its source URL, extension and mime type are stored. */
+  | 'download'
   | 'chrome_focus_lost'
   | 'chrome_focus_gained';
 
@@ -26,6 +30,11 @@ export interface CadenceEvent {
   programmatic?: boolean;
   /** Written by the debug page's "Simulate" action only; wiped by its one-click cleanup. */
   synthetic?: boolean;
+  /** A Google results page whose query mentions "pdf". Only this flag is stored, never the query. */
+  pdfSearch?: boolean;
+  /** download only: file extension (no name) and mime type. */
+  ext?: string;
+  mime?: string;
   /** `navigated` from history.pushState / replaceState (in-page navigation), not a document load. */
   spa?: boolean;
 }
@@ -47,11 +56,14 @@ export type ContentMessage =
   | { type: 'activity_idle'; what: 'key' | 'scroll' | 'click'; ts: number }
   | { type: 'sensitive_focus'; value: boolean }
   /** Leader-key overlay (or the panel fallback) asking the background to run a letter / a search result. */
-  | { type: 'leader_run'; letter: string }
+  /** `selection` is the page's selected text, captured when the menu opened (Find PDF only). */
+  | { type: 'leader_run'; letter: string; selection?: string }
   | { type: 'leader_run_item'; kind: 'space' | 'ritual' | 'macro'; id: number }
   /** Overlay answering the "Repeat N steps?" preview. */
   | { type: 'leader_repeat_confirm' }
-  | { type: 'leader_repeat_cancel' };
+  | { type: 'leader_repeat_cancel' }
+  /** A copy happened in the page (no content). */
+  | { type: 'copy'; frameUrl?: string };
 
 /** A learned (writing tab, reference tab) pair for Focus Flip. Counts and durations only. */
 export interface FlipPair {
@@ -418,6 +430,14 @@ export interface MacroRunCommand {
   ts: number;
 }
 
+/** A saved command: runs a built-in resolver with run-time variables instead of replaying steps. */
+export interface MacroCommand {
+  kind: 'find_pdf';
+  variables: { name: string; source: 'selection' }[];
+  /** Resolver sources to try first (the ones the user actually used), then the defaults. */
+  sourceOrder: ('arxiv' | 'semantic_scholar' | 'openalex' | 'internet_archive')[];
+}
+
 export interface Macro {
   id?: number;
   /** Content-derived and stable across recomputes, so a scan updates rather than forks a macro. */
@@ -445,6 +465,8 @@ export interface Macro {
   trigger?: MacroTrigger;
   /** Cadence-side: if a page is already open, switch to it instead of opening a new tab. Default (unset) opens a new tab. */
   reuseOpenTabs?: boolean;
+  /** A command rather than a replayed routine (e.g. Find PDF). Such a macro has no `steps` to replay. */
+  command?: MacroCommand;
   /** Cadence-side: hidden from suggestions until this time ("Not now" back-off). */
   snoozedUntil?: number;
   /** Cadence-side: leader-key letter (persisted on the row). */

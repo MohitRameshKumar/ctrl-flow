@@ -40,8 +40,10 @@ export function visibleSuggestions<M extends Macro>(macros: M[], now: number): M
       (m.snoozedUntil ?? 0) <= now &&
       (m.stats?.offersDismissed ?? 0) < MACRO_DISMISS_STOP,
   );
+  // A command (Find PDF) has no steps to weigh, and one sighting of it is meant to be enough: it ranks first.
+  const score = (m: Macro) => (m.command ? Number.MAX_SAFE_INTEGER : m.occurrences * openUrlSet(m.steps).size);
   return dedupeSuggestions(live)
-    .sort((a, b) => b.occurrences * openUrlSet(b.steps).size - a.occurrences * openUrlSet(a.steps).size)
+    .sort((a, b) => score(b) - score(a))
     .slice(0, MAX_SUGGESTIONS);
 }
 

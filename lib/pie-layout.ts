@@ -4,10 +4,15 @@ import type { MenuItem } from './hotkeys';
 
 export const PIE_MAX_SLICES = 8;
 
-/** Built-in actions that always lead the ring, in this order. Matched by registration id. */
-export const DEFAULT_PIE_ORDER = ['macro-repeat', 'macro-keep', 'macro-mark', 'stop', 'pause', 'search'] as const;
+/**
+ * Built-in actions that always lead the ring, in this order (matched by registration id). The rest of
+ * the defaults (Focus Flip, Search) rank after the user's macros and spaces, so that adding a few
+ * lettered macros pushes only those two into "More…" (still reachable by letter and in its list).
+ */
+export const DEFAULT_PIE_ORDER = ['macro-repeat', 'macro-keep', 'macro-mark', 'stop', 'pause', 'find-pdf'] as const;
+const TRAILING_DEFAULTS = ['focus-flip', 'search'] as const;
 
-export type PieIcon = 'repeat' | 'keep' | 'mark' | 'stop' | 'pause' | 'search' | 'play' | 'folder' | 'panel' | 'more';
+export type PieIcon = 'repeat' | 'keep' | 'mark' | 'stop' | 'pause' | 'search' | 'play' | 'folder' | 'panel' | 'more' | 'pdf' | 'flip';
 
 export interface PieSlice {
   /** "item" runs a menu entry; "more" opens the search list. */
@@ -35,6 +40,10 @@ export function iconFor(item: MenuItem): PieIcon {
       return 'pause';
     case 'search':
       return 'search';
+    case 'find-pdf':
+      return 'pdf';
+    case 'focus-flip':
+      return 'flip';
     default:
       return 'panel';
   }
@@ -62,6 +71,8 @@ export function pieLayout(items: MenuItem[]): { slices: PieSlice[]; overflow: Me
     if (i.kind === 'action' && d >= 0) return d;
     if (i.kind === 'macro') return 100;
     if (i.kind === 'space') return 200;
+    const t = (TRAILING_DEFAULTS as readonly string[]).indexOf(i.id);
+    if (i.kind === 'action' && t >= 0) return 250 + t;
     return 300;
   };
   const ordered = items

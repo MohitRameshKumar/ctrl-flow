@@ -49,6 +49,7 @@ import {
   shouldPromoteToAuto,
 } from './macro-learning';
 import { isReplayInProgress } from './macro-run-channel';
+import { runFindPdf } from './find-pdf';
 import { refineSegment } from './macro-repeat';
 import { dominatedSuggestions, visibleSuggestions } from './macro-suggestions';
 import { snoozeMs } from './macro-thresholds';
@@ -176,6 +177,14 @@ export async function runMacro(
   const macro = await getMacroById(macroId);
   if (!macro || macro.status === 'never') return null;
 
+  // Cadence-side: a saved command (Find PDF) has no steps to replay. It runs its resolver on the page's
+  // current selection and is never auto-run or promoted, so it skips the replay bookkeeping below.
+  if (macro.command?.kind === 'find_pdf') {
+    const startedAt = Date.now();
+    await runFindPdf();
+    return { startedAt, finishedAt: Date.now(), outcomes: [] };
+  }
+
   const [settingMode, speed] = await Promise.all([getRunMode(), getRunSpeed()]);
   const mode = options.mode ?? settingMode;
   // Parameter values that were redacted (ids, tokens, emails) are never remembered, so they must be supplied.
@@ -230,7 +239,8 @@ async function recordOffer(macroKey: string): Promise<void> {
  */
 export async function offerTopSuggestedMacro(): Promise<void> {
   const macros = await getMacros();
-  const suggested = visibleSuggestions(macros, Date.now()).filter((m) => m.id !== undefined);
+  // Commands (Find PDF) have their own suggestion notification with the right buttons.
+  const suggested = visibleSuggestions(macros, Date.now()).filter((m) => m.id !== undefined && !m.command);
 
   const macro = suggested[0];
   if (!macro?.id) return;

@@ -35,7 +35,7 @@ export default defineContentScript({
         message.items,
         message.search,
         {
-          runLetter: (letter) => send({ type: 'leader_run', letter }),
+          runLetter: (letter, selection) => send({ type: 'leader_run', letter, ...(selection ? { selection } : {}) }),
           runSearchItem: (kind, id) => send({ type: 'leader_run_item', kind, id }),
           confirmRepeat: () => send({ type: 'leader_repeat_confirm' }),
           cancelRepeat: () => send({ type: 'leader_repeat_cancel' }),

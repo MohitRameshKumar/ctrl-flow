@@ -1,6 +1,8 @@
 import { updateBadge } from '@/lib/badge';
 import { createCalendarSource } from '@/lib/calendar';
 import { MACRO_LOOKBACK_MS } from '@/lib/constants';
+import { checkPaperLookup } from '@/lib/find-pdf-command';
+import { isPdfSearchUrl } from '@/lib/paper-pattern';
 import { db, pruneMacroData } from '@/lib/db';
 import { normalizeUrl } from '@/lib/normalize';
 import { routeNotificationButtonClicked } from '@/lib/notifications';
@@ -72,6 +74,9 @@ interface WriteEventInput {
   keyCount?: number;
   programmatic?: boolean;
   spa?: boolean;
+  /** download only */
+  ext?: string;
+  mime?: string;
 }
 
 /**
@@ -115,6 +120,8 @@ const KINDS_REQUIRING_URL = new Set<EventKind>([
   'navigated',
   'click',
   'field_changed',
+  'copy',
+  'download',
 ]);
 
 function isDuplicate(kind: EventKind, url: string | undefined, tabId: number | undefined): boolean {
@@ -189,6 +196,10 @@ async function writeEvent(input: WriteEventInput): Promise<void> {
     keyCount: input.keyCount,
     programmatic: input.programmatic ? true : undefined,
     spa: input.spa ? true : undefined,
+    // Only the flag survives: normalizeUrl strips the query, and the query text is never stored.
+    pdfSearch: input.kind === 'navigated' || input.kind === 'tab_opened' || input.kind === 'tab_activated' ? (isPdfSearchUrl(input.rawUrl) ? true : undefined) : undefined,
+    ext: input.ext,
+    mime: input.mime,
   };
 
   await db.events.add(event);
@@ -342,6 +353,10 @@ async function handleContentMessage(
         fieldName: message.fieldName,
       });
       return;
+    case 'copy':
+      // The fact of a copy and where it happened: never what was copied.
+      await writeEvent({ kind: 'copy', tabId: tab?.id, windowId: tab?.windowId, rawUrl: tab?.url, frameUrl: message.frameUrl });
+      return;
     case 'typing_burst':
       await writeEvent({
         kind: 'typing_burst',
@@ -363,7 +378,7 @@ async function handleContentMessage(
       return;
     // Leader-key requests are commands, never activity: nothing here writes an event.
     case 'leader_run':
-      await runLeaderLetter(message.letter, { tabId: tab?.id, windowId: tab?.windowId });
+      await runLeaderLetter(message.letter, { tabId: tab?.id, windowId: tab?.windowId, selection: message.selection });
       return;
     case 'leader_run_item':
       await runSearchItem(message.kind, message.id);
@@ -486,6 +501,16 @@ export default defineBackground(() => {
       .set({ [MACRO_PALETTE_REQUEST_KEY]: { ts: Date.now() } })
       .catch((err) => console.error('[cadence] palette request failed', err));
     opening.catch((err) => console.error('[cadence] sidePanel.open failed', err));
+  });
+
+  // Downloads (needs the `downloads` permission; absent until it is granted). Only the source URL,
+  // extension and mime type are recorded, never the file name or contents (CAP-1).
+  chrome.downloads?.onCreated.addListener((item) => {
+    const path = (item.finalUrl || item.url).split(/[?#]/)[0] ?? '';
+    const ext = /\.([a-z0-9]{1,5})$/i.exec(path)?.[1]?.toLowerCase();
+    writeEvent({ kind: 'download', rawUrl: item.finalUrl || item.url, ext, mime: item.mime || undefined })
+      .then(() => checkPaperLookup())
+      .catch((err) => console.error('[cadence] download event failed', err));
   });
 
   chrome.runtime.onStartup.addListener(() => {

@@ -16,25 +16,28 @@ const defaults = [
   action('k', 'macro-keep'),
 ];
 
-test('pie: defaults lead in a fixed order (R K M S P /), then macros, then spaces', () => {
-  const { slices, overflow } = pieLayout([space('w', '7'), macro('g', '3'), ...defaults]);
-  assert.deepEqual(slices.map((s) => s.letter), ['r', 'k', 'm', 's', 'p', '/', 'g', 'w']);
-  assert.deepEqual(slices.map((s) => s.icon), ['repeat', 'keep', 'mark', 'stop', 'pause', 'search', 'play', 'folder']);
+test('pie: core defaults lead (R K M S P F), then macros, then spaces, then Focus Flip and Search', () => {
+  const core = [...defaults.filter((d) => d.id !== 'search'), action('f', 'find-pdf')];
+  const { slices, overflow } = pieLayout([space('w', '7'), macro('g', '3'), ...core]);
+  assert.deepEqual(slices.map((s) => s.letter), ['r', 'k', 'm', 's', 'p', 'f', 'g', 'w']);
+  assert.deepEqual(slices.map((s) => s.icon), ['repeat', 'keep', 'mark', 'stop', 'pause', 'pdf', 'play', 'folder']);
   assert.equal(overflow.length, 0);
-  assert.equal(slices.length, PIE_MAX_SLICES);
 });
 
-test('pie: exactly 8 items get 8 slices and no "More…"; 9 items get 7 slices plus "More…"', () => {
-  const eight = pieLayout([...defaults, macro('g', '1'), macro('h', '2')]);
-  assert.equal(eight.slices.length, 8);
-  assert.ok(eight.slices.every((s) => s.kind === 'item'));
+test('pie: with no macros or spaces all eight defaults fit, ending with Focus Flip and Search', () => {
+  const { slices, overflow } = pieLayout([...defaults, action('f', 'find-pdf'), action('o', 'focus-flip')]);
+  assert.deepEqual(slices.map((s) => s.letter), ['r', 'k', 'm', 's', 'p', 'f', 'o', '/']);
+  assert.equal(slices[6]!.icon, 'flip');
+  assert.equal(slices.length, PIE_MAX_SLICES);
+  assert.equal(overflow.length, 0);
+});
 
-  const nine = pieLayout([...defaults, macro('g', '1'), macro('h', '2'), macro('j', '3')]);
-  assert.equal(nine.slices.length, 8);
-  assert.equal(nine.slices[7]!.kind, 'more');
-  assert.equal(nine.slices[7]!.label, 'More…');
-  assert.deepEqual(nine.slices.slice(0, 7).map((s) => s.letter), ['r', 'k', 'm', 's', 'p', '/', 'g']);
-  assert.deepEqual(nine.overflow.map((i) => i.letter), ['h', 'j']);
+test('pie: adding macros pushes only Focus Flip and Search behind "More…", never the core defaults', () => {
+  const items = [...defaults, action('f', 'find-pdf'), action('o', 'focus-flip'), macro('g', '1'), macro('h', '2')];
+  const { slices, overflow } = pieLayout(items);
+  assert.deepEqual(slices.map((s) => s.letter), ['r', 'k', 'm', 's', 'p', 'f', 'g', '']);
+  assert.equal(slices[7]!.kind, 'more');
+  assert.deepEqual(overflow.map((i) => i.letter), ['h', 'o', '/']);
 });
 
 test('pie: macros sort by letter within their group, and other actions (E) come last', () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getLastAiRequest, type LastAiRequestRecord } from '@/lib/ai';
+import { getLastOutboundAny } from '@/lib/outbound-log';
 import type { RunMode, RunSpeed } from '@/lib/types';
 
 export interface SettingsPanelProps {
@@ -16,26 +16,29 @@ export interface SettingsPanelProps {
   onToggleAutoRun: () => void;
 }
 
-function LastAiRequestViewer() {
-  const [record, setRecord] = useState<LastAiRequestRecord | null>(null);
+function LastOutboundViewer() {
+  const [last, setLast] = useState<Awaited<ReturnType<typeof getLastOutboundAny>>>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    getLastAiRequest().then(setRecord);
-    const onChanged = () => getLastAiRequest().then(setRecord);
+    getLastOutboundAny().then(setLast);
+    const onChanged = () => getLastOutboundAny().then(setLast);
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
   }, []);
 
   return (
     <div className="last-ai-request">
-      <button className="btn btn-link" onClick={() => setOpen((v) => !v)}>
-        {open ? 'Hide' : 'Show'} last AI request
+      <button className="btn-link" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide' : 'Show'} last outbound request
       </button>
       {open && (
-        <pre className="ai-request-json">
-          {record ? JSON.stringify(record, null, 2) : 'No AI calls made yet.'}
-        </pre>
+        <>
+          {last?.via === 'pdf-lookup' && (
+            <p className="hint">Only the title you selected was sent, only to the sources listed, and only because you pressed the key.</p>
+          )}
+          <pre className="ai-request-json">{last ? JSON.stringify(last.record, null, 2) : 'Nothing has been sent off this device yet.'}</pre>
+        </>
       )}
     </div>
   );
@@ -119,7 +122,7 @@ export function SettingsPanel({
 
       {fallbackNotice && <div className="notice">{fallbackNotice}</div>}
 
-      <LastAiRequestViewer />
+      <LastOutboundViewer />
 
       <button className="btn-link" onClick={openDebugPage}>
         Open debug page

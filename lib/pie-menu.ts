@@ -1,6 +1,7 @@
 // The leader-key pie menu, rendered into a closed shadow root so no page style leaks in or out.
 // SVG-based, so it stays crisp at any zoom. Layout and aiming math live in pie-layout.ts.
 import type { MenuItem, SearchItem } from './hotkeys';
+import { readSelection, cleanSelection } from './selection';
 import { pieLayout, pointerTarget, sliceAngles, type PieIcon, type PieSlice } from './pie-layout';
 
 const FLAG = '__cadenceLeaderOpen';
@@ -25,6 +26,8 @@ const ICONS: Record<PieIcon, string> = {
   pause: 'M7 5h4v14H7zM13 5h4v14h-4z',
   search: 'M10 2a8 8 0 1 0 5 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z',
   play: 'M8 5v14l11-7z',
+  pdf: 'M6 2h8l5 5v15H6V2zm7 1.5V8h4.5M9 13h6M9 16h6M9 19h4',
+  flip: 'M7 3L3 7l4 4V8h8V6H7V3zm10 10v3H9v2h8v3l4-4-4-4z',
   folder: 'M3 5h7l2 2h9v13H3z',
   panel: 'M3 4h18v16H3V4zm11 2v12h5V6h-5z',
   more: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
@@ -58,6 +61,9 @@ const STYLE = `
   .badge circle { fill: var(--badge); stroke: var(--ring); stroke-width: 1; }
   .badge text { fill: var(--badge-ink); font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-anchor: middle; }
   .hub { fill: var(--bg); stroke: var(--ring); stroke-width: 1; }
+  .center.input { pointer-events: auto; }
+  .c-input { width: 100%; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--ring); background: var(--slice); color: var(--ink); font: inherit; font-size: 11.5px; outline: none; }
+  .c-input:focus { border-color: var(--slice-hover); }
   .center { position: absolute; left: 50%; top: 50%; width: 41%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
   .c-title { font-weight: 700; font-size: 12.5px; margin-bottom: 3px; }
   .c-text { color: var(--ink-dim); font-size: 11px; display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
@@ -120,7 +126,7 @@ function sliceSvg(slice: PieSlice, index: number, n: number): string {
 
 export interface PieHandlers {
   /** Run the entry on this letter (background `leader_run`). */
-  runLetter(letter: string): void;
+  runLetter(letter: string, selection?: string): void;
   runSearchItem(kind: SearchItem['kind'], id: number): void;
   confirmRepeat(): void;
   cancelRepeat(): void;
@@ -131,7 +137,7 @@ export interface PieController {
   destroy(): void;
 }
 
-type Mode = 'pie' | 'search' | 'preview' | 'notice';
+type Mode = 'pie' | 'search' | 'preview' | 'notice' | 'input';
 
 export function mountPie(
   items: MenuItem[],
@@ -139,7 +145,7 @@ export function mountPie(
   handlers: PieHandlers,
   onClosed: () => void,
 ): PieController {
-  const { slices } = pieLayout(items);
+  const { slices, overflow } = pieLayout(items);
   const letterToItem = new Map(items.map((i) => [i.letter, i] as const));
 
   const host = document.createElement('div');
@@ -161,6 +167,10 @@ export function mountPie(
   let selected = 0;
   let destroyed = false;
 
+  // Snapshot of the page's selection, held in memory only. Mouse clicks on the overlay can collapse the
+  // live selection, so Find PDF uses this copy. It is sent nowhere unless the user chooses Find PDF.
+  const selectionSnapshot = readSelection();
+
   (globalThis as unknown as Record<string, boolean>)[FLAG] = true;
 
   function arm(ms = PIE_SAFETY_MS): void {
@@ -171,10 +181,21 @@ export function mountPie(
     }, ms);
   }
 
-  function matches(): SearchItem[] {
+  interface Row {
+    label: string;
+    kind: string;
+    search?: SearchItem;
+    /** An action with no slice (it landed in "More…"); runs like a slice would. */
+    item?: MenuItem;
+  }
+
+  function matches(): Row[] {
     const q = query.trim().toLowerCase();
-    // Overflow items (macros / spaces without a slice) are already in the search list.
-    return search.filter((s) => !q || s.label.toLowerCase().includes(q)).slice(0, 8);
+    const rows: Row[] = [
+      ...overflow.map((item): Row => ({ label: `${item.short ?? item.label}${item.letter ? `  (${item.letter.toUpperCase()})` : ''}`, kind: 'action', item })),
+      ...search.map((s): Row => ({ label: s.label, kind: s.kind, search: s })),
+    ];
+    return rows.filter((r) => !q || r.label.toLowerCase().includes(q)).slice(0, 8);
   }
 
   function renderPie(): void {
@@ -252,8 +273,13 @@ export function mountPie(
   }
 
   function pick(i: number): void {
-    const s = matches()[i];
-    if (s) handlers.runSearchItem(s.kind, s.id);
+    const row = matches()[i];
+    if (!row) return;
+    if (row.item) {
+      runItem(row.item);
+      return;
+    }
+    if (row.search) handlers.runSearchItem(row.search.kind, row.search.id);
     destroy();
   }
 
@@ -276,6 +302,16 @@ export function mountPie(
       notice('Open the panel', 'Click the ctrl-flow icon in the toolbar to open the panel.');
       return;
     }
+    if (item.id === 'find-pdf') {
+      findPdf(item);
+      return;
+    }
+    if (item.id === 'focus-flip') {
+      handlers.runLetter(item.letter);
+      // Show the state it just switched to, then close.
+      notice('Focus Flip', item.on ? 'Focus Flip is now off.' : 'Focus Flip is now on.', 1600);
+      return;
+    }
     handlers.runLetter(item.letter);
     if (item.id === 'macro-repeat') {
       mode = 'notice';
@@ -286,10 +322,36 @@ export function mountPie(
     destroy();
   }
 
-  function notice(title: string, text: string): void {
+  function notice(title: string, text: string, ms = NOTICE_MS): void {
     mode = 'notice';
     setCenter(title, text);
-    arm(NOTICE_MS);
+    arm(ms);
+  }
+
+  /** F: use the selection captured when the menu opened; with none, ask for the title in the center. */
+  function findPdf(item: MenuItem): void {
+    if (selectionSnapshot) {
+      handlers.runLetter(item.letter, selectionSnapshot);
+      notice('Find PDF', `Looking for “${truncate(selectionSnapshot, 60)}”…`, 3000);
+      return;
+    }
+    mode = 'input';
+    const center = wrap.querySelector('.center');
+    if (!center) return;
+    center.classList.add('input');
+    center.innerHTML =
+      `<div class="c-title">Find PDF</div><input class="c-input" aria-label="Paper title" placeholder="Paper title or DOI" maxlength="300"/>` +
+      `<div class="c-key">Enter to search · Esc to close</div>`;
+    wrap.querySelector<HTMLInputElement>('.c-input')?.focus();
+    arm();
+  }
+
+  function submitInput(): void {
+    const value = cleanSelection(wrap.querySelector<HTMLInputElement>('.c-input')?.value ?? '');
+    if (!value) return;
+    handlers.runLetter(items.find((i) => i.id === 'find-pdf')?.letter ?? 'f', value);
+    wrap.querySelector('.center')?.classList.remove('input');
+    notice('Find PDF', `Looking for “${truncate(value, 60)}”…`, 3000);
   }
 
   function pieCenterOffset(e: MouseEvent): { dx: number; dy: number; scale: number } | null {
@@ -362,6 +424,14 @@ export function mountPie(
         pick(selected);
       }
       return; // typing goes to the overlay's own input
+    }
+
+    if (mode === 'input') {
+      if (e.key === 'Enter') {
+        swallow(e);
+        submitInput();
+      }
+      return; // typing goes to the center input
     }
 
     swallow(e);

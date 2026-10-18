@@ -1,6 +1,6 @@
 // Background side of the leader key: built-in letters, saved-space letters, running a letter, and
 // opening the overlay (or the side-panel fallback on pages content scripts can't run on).
-import { getMacros, getRituals, getSpaces, setMacroLetterRow, setSpaceLetterRow } from './db';
+import { getMacros, getRituals, getSpaces, setMacroLetterRow, setSpaceLetterRow, updateMacroStatus } from './db';
 import {
   buildMenu,
   canHostOverlay,
@@ -29,7 +29,9 @@ import {
   stopRunningMacro,
   toggleMark,
 } from './macro-leaders';
-import { runMacro } from './macros';
+import { notNowSuggestion, runMacro } from './macros';
+import { FOCUS_FLIP_KEY, isFocusFlipEnabled } from './focus-flip';
+import { openDownload, runFindPdf } from './find-pdf';
 import { openRitualDocs } from './rituals';
 import type { Macro } from './types';
 import { switchToSpace } from './spaces';
@@ -90,6 +92,28 @@ export function registerBuiltinLeaders(): void {
     },
   });
   // Handled inside the overlay (it switches to a search list); a no-op if run from elsewhere.
+  // F: Find PDF. Reads the selection (captured by the pie, or from the tab for a slot key) at run time.
+  registerLeader({
+    id: 'find-pdf',
+    letter: 'f',
+    label: 'Find PDF',
+    short: 'Find PDF',
+    description: 'Find a free, legal PDF of the paper title you selected',
+    run: async (ctx) => {
+      await runFindPdf({ tabId: ctx.tabId, selection: ctx.selection });
+    },
+  });
+  // O (on/off): turns Focus Flip on or off, the same switch as Settings. Free letter; change it in Settings.
+  registerLeader({
+    id: 'focus-flip',
+    letter: 'o',
+    label: 'Turn Focus Flip on or off',
+    short: 'Focus Flip',
+    description: 'Turn Focus Flip on or off',
+    run: async () => {
+      await chrome.storage.local.set({ [FOCUS_FLIP_KEY]: !(await isFocusFlipEnabled()) });
+    },
+  });
   registerLeader({ id: 'search', letter: '/', label: 'Search spaces, rituals & macros', short: 'Search', description: 'Search spaces, rituals and macros', run: () => undefined });
 }
 
@@ -148,6 +172,19 @@ export async function routeLeaderNotification(notificationId: string, buttonInde
       const check = await setMacroLetter(Number(m[1]), m[2]!);
       if (!check.ok) await notifyLeaderFailure('Could not assign letter', check.reason);
     }
+    await chrome.notifications.clear(notificationId).catch(() => undefined);
+    return;
+  }
+  const open = new RegExp(`^${LEADER_NOTIFICATION_PREFIX}pdf-open:(\\d+)$`).exec(notificationId);
+  if (open) {
+    if (buttonIndex === 0) await openDownload(Number(open[1]));
+    await chrome.notifications.clear(notificationId).catch(() => undefined);
+    return;
+  }
+  const suggest = new RegExp(`^${LEADER_NOTIFICATION_PREFIX}pdf-suggest:(\\d+)$`).exec(notificationId);
+  if (suggest) {
+    if (buttonIndex === 0) await updateMacroStatus(Number(suggest[1]), 'accepted');
+    else await notNowSuggestion(Number(suggest[1]));
     await chrome.notifications.clear(notificationId).catch(() => undefined);
     return;
   }
@@ -231,7 +268,14 @@ export async function setBuiltinLetter(id: string, letter: string): Promise<Lett
 
 export async function getMenu(): Promise<MenuItem[]> {
   registerBuiltinLeaders();
-  return buildMenu(listRegistrations(), await getLetterOverrides(), await getSpaceLetters(), await getMacroLetters());
+  const menu = buildMenu(listRegistrations(), await getLetterOverrides(), await getSpaceLetters(), await getMacroLetters());
+  // Focus Flip's slice shows its current state in the pie's center.
+  const flipOn = await isFocusFlipEnabled();
+  return menu.map((i) =>
+    i.kind === 'action' && i.id === 'focus-flip'
+      ? { ...i, on: flipOn, short: flipOn ? 'Flip: on' : 'Flip: off', description: flipOn ? 'Focus Flip is on. Press to turn it off.' : 'Focus Flip is off. Press to turn it on.' }
+      : i,
+  );
 }
 
 export async function getSearchItems(): Promise<SearchItem[]> {

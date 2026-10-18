@@ -150,6 +150,13 @@ function onClick(e: MouseEvent): void {
   send({ type: 'click', selector, label, frameUrl: frameOrigin() });
 }
 
+/** A copy happened: report the fact only. The clipboard and the selection are never read here. */
+function onCopy(): void {
+  if (leaderOverlayOpen()) return;
+  if (isSensitiveControl(document.activeElement)) return;
+  send({ type: 'copy', frameUrl: frameOrigin() });
+}
+
 function onFieldChange(e: Event): void {
   const el = e.target;
   if (
@@ -297,6 +304,7 @@ export default defineContentScript({
     guard.listen(document, 'focusout', flip.onFocusChange, { capture: true });
     guard.listen(window, 'keydown', flip.onKeydown, { capture: true });
     guard.listen(document, 'change', onFieldChange, { capture: true });
+    guard.listen(document, 'copy', onCopy, { capture: true });
     // Rich editors (Google Docs, custom contenteditable widgets) commonly call
     // stopImmediatePropagation() on keydown at the document level or below to own
     // their own keyboard handling. A capture-phase listener on `window` always runs
